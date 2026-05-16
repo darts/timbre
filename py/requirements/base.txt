@@ -1,0 +1,12 @@
+# Common deps installed across all backend packs.
+# Torch is installed separately by the backend-pack installer using
+# the appropriate --index-url for cpu/cuda; mps uses the default index.
+huggingface_hub>=0.34,<1
+soundfile>=0.12
+numpy>=1.26,<3
+pysbd>=0.3
+transformers==4.57.3
+accelerate==1.12.0
+safetensors>=0.4
+librosa>=0.10
+faster-whisper>=1.0

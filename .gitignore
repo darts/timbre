@@ -1,0 +1,29 @@
+node_modules/
+dist/
+.vite/
+src-tauri/target/
+src-tauri/gen/
+
+py/.venv/
+py/**/__pycache__/
+py/**/*.pyc
+
+.DS_Store
+*.log
+
+# user-machine app data should never be committed
+appdata/
+
+# nix / direnv
+.direnv/
+result
+result-*
+
+# project-local toolchain stores (created by the dev shell)
+.cargo/
+.pnpm-store/
+
+# local-only env overrides
+.env
+
+._*

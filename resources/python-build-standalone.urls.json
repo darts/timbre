@@ -1,0 +1,42 @@
+{
+  "release": "20260504",
+  "python_version": "3.12.13",
+  "uv_version": "0.11.10",
+  "platforms": {
+    "macos-arm64": {
+      "python": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260504/cpython-3.12.13+20260504-aarch64-apple-darwin-install_only.tar.gz",
+        "sha256": "dac5f4a78c8c921cf7b5aade0c9961b913667f5ece79c7a47d1ebbdb7453e750"
+      },
+      "uv": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.11.10/uv-aarch64-apple-darwin.tar.gz",
+        "sha256": "e93d6af7dfff7071edd16342ba9eeccfc28d8a7deaa5707efeecf63a63a74453"
+      }
+    },
+    "macos-x86_64": {
+      "python": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260504/cpython-3.12.13+20260504-x86_64-apple-darwin-install_only.tar.gz",
+        "sha256": "c031fa351c1891209272dfd2d35318a9ab3f894fb5d1543a26b0675829646952"
+      },
+      "uv": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.11.10/uv-x86_64-apple-darwin.tar.gz",
+        "sha256": "8fd091211089973f528e147166e3af683ab4ecebd4312a55d0d17d87adbde67a"
+      }
+    },
+    "windows-x86_64": {
+      "python": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260504/cpython-3.12.13+20260504-x86_64-pc-windows-msvc-install_only.tar.gz",
+        "sha256": "94024f71b93798700774521b8a5774c6ce9c435d97ca2c430418b2af36368541"
+      },
+      "uv": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.11.10/uv-x86_64-pc-windows-msvc.zip",
+        "sha256": "7a0c424c7bc55a74751f13592235953ebbe182fa00355f7ae3fb7ab734a51638"
+      }
+    }
+  },
+  "torch_index_urls": {
+    "cpu": "https://download.pytorch.org/whl/cpu",
+    "cuda": "https://download.pytorch.org/whl/cu124",
+    "mps": null
+  }
+}

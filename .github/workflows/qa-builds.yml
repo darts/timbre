@@ -1,0 +1,68 @@
+name: Unsigned QA Builds
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "qa-*"
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            os: macos-15
+            bundles: app,dmg
+            artifact_name: timbre-macos-arm64
+          - platform: windows-x86_64
+            os: windows-2025
+            bundles: msi,nsis
+            artifact_name: timbre-windows-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate release inputs
+        run: pnpm release:validate
+
+      - name: Typecheck frontend
+        run: pnpm exec tsc --noEmit --pretty false
+
+      - name: Check Rust shell
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Build unsigned Tauri bundles
+        run: pnpm tauri:build -- --bundles ${{ matrix.bundles }}
+
+      - name: Write artifact checksums
+        run: pnpm release:checksums -- ${{ matrix.platform }}
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.app
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*SHA256SUMS.txt
+          if-no-files-found: error

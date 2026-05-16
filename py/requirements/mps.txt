@@ -1,0 +1,3 @@
+# Installed from the default PyPI index — the macOS arm64 wheel includes MPS.
+torch==2.6.0
+torchaudio==2.6.0

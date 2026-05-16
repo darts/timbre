@@ -1,0 +1,251 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "qwen3-tts-1.7b",
+      "name": "Qwen3-TTS 1.7B",
+      "vendor": "Qwen / Alibaba",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base/blob/main/LICENSE",
+      "license_acknowledgement_required": false,
+      "adapter": "qwen3",
+      "hf_repo": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+      "hf_files": null,
+      "description": "Highest-quality voice cloning across 10 languages. Pick this for narration, multilingual content, or anywhere you want the most natural baseline.",
+      "ratings": { "speed": 8.5, "quality": 9.5 },
+      "approx_size_mb": 4301,
+      "sample_rate": 24000,
+      "ref_clip": { "min_seconds": 3, "max_seconds": 15, "transcript_required": false },
+      "languages": ["auto", "english", "german", "chinese", "french", "italian", "japanese", "korean", "portuguese", "russian", "spanish"],
+      "hardware": ["cpu", "cuda", "mps"],
+      "hardware_notes": { "mps": "Runs on MPS in fp32 with eager attention (SDPA's GQA kernel is unimplemented on MPS)." },
+      "is_default": true,
+      "params": [],
+      "getting_started": {
+        "ref_clip_tips": "Mono speech, 5–15 seconds is the sweet spot (3 s minimum). Single speaker, clean — no music, whispering, or singing, since the model copies the reference literally. Providing the reference transcript noticeably improves similarity over the no-transcript fallback.",
+        "text_tips": "The app chunks long inputs automatically at sentence boundaries. For best flow, write in complete sentences with normal punctuation; very long run-on sentences drift mid-output.",
+        "audio_length_tips": "Stable up to about 2.5 minutes of audio per call. Anything longer should be chunked.",
+        "sample_prompts": [
+          {
+            "label": "Mixed symbols and punctuation (English)",
+            "text": "I am solving the equation: x = [-b ± √(b²-4ac)] / 2a? Nobody can — it's a disaster, very sad!"
+          },
+          {
+            "label": "Cross-lingual (English voice speaking Mandarin)",
+            "text": "今天天气真好，我们一起去公园散步，然后喝一杯热咖啡吧。"
+          },
+          {
+            "label": "Long-form stability check",
+            "text": "The lighthouse keeper had watched the same horizon for thirty-seven winters. Each morning he climbed the spiral staircase, counted the steps out of habit, and lit the lamp before the sun had finished its slow retreat. He liked the gulls, distrusted the tourists, and kept a single photograph in his coat pocket — black and white, edges softened by salt and time. Tonight the wind was different. It carried no smell of fish, no whisper of rain; only a low, patient hum, as though the sea itself were waiting for him to notice something he had been refusing to see."
+          }
+        ],
+        "gotchas": [
+          "Whispered, sung, or noisy references produce whispered, sung, or noisy output — the model copies prosody literally.",
+          "Reference clips shorter than 3 seconds give unstable timbre between regenerations.",
+          "Skipping the reference transcript drops speaker similarity noticeably — always paste a transcript if you have one.",
+          "Specific accents (British, Australian, regional US) are unreliable unless the reference clip already has the accent."
+        ]
+      }
+    },
+    {
+      "id": "qwen3-tts-0.6b",
+      "name": "Qwen3-TTS 0.6B",
+      "vendor": "Qwen / Alibaba",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base/blob/main/LICENSE",
+      "license_acknowledgement_required": false,
+      "adapter": "qwen3",
+      "hf_repo": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+      "hf_files": null,
+      "description": "Same multilingual cloning as 1.7B at roughly half the size and memory. Pick this when 1.7B is too heavy for your machine — quality is close, but long-form coherence is weaker.",
+      "ratings": { "speed": 9.3, "quality": 8.9 },
+      "approx_size_mb": 2355,
+      "sample_rate": 24000,
+      "ref_clip": { "min_seconds": 3, "max_seconds": 15, "transcript_required": false },
+      "languages": ["auto", "chinese", "english", "french", "german", "italian", "japanese", "korean", "portuguese", "russian", "spanish"],
+      "hardware": ["cpu", "cuda", "mps"],
+      "hardware_notes": { "mps": "Runs on MPS in fp32 with eager attention (SDPA's GQA kernel is unimplemented on MPS)." },
+      "params": [],
+      "getting_started": {
+        "ref_clip_tips": "Mono speech, 5–15 seconds is the sweet spot (3 s minimum). Single speaker, clean — no music, whispering, or singing. This model is more sensitive to background noise than 1.7B; reproduces it as artifacts.",
+        "text_tips": "The app chunks long inputs automatically. This model is more prone to drift than 1.7B — favour shorter sentences and break run-ons into two.",
+        "audio_length_tips": "Best kept under about 30 seconds per call. Long inputs commonly produce 15–25 second silences mid-output.",
+        "sample_prompts": [
+          {
+            "label": "Short conversational (English)",
+            "text": "Honestly, I wasn't sure if it would work at all, but it turned out better than I expected — quieter, lighter, and way easier to set up."
+          },
+          {
+            "label": "Cross-lingual (English voice speaking Mandarin)",
+            "text": "今天天气真好，我们一起去公园散步，然后喝一杯热咖啡吧。"
+          },
+          {
+            "label": "Short paragraph (stays in its lane)",
+            "text": "The bakery opens at six. By half past, the queue stretches around the corner and the smell of warm bread reaches across the street. Ana waves from the counter as I push the door open."
+          }
+        ],
+        "gotchas": [
+          "Don't attempt multi-minute single-shot inputs — chunk aggressively.",
+          "Emotion in the reference is often flattened on output; pick the 1.7B model when expressive delivery matters.",
+          "Background noise in the reference is reproduced rather than filtered — use a clean clip.",
+          "Reference clips shorter than 3 seconds give unstable timbre between regenerations."
+        ]
+      }
+    },
+    {
+      "id": "chatterbox-turbo",
+      "name": "Chatterbox Turbo",
+      "vendor": "Resemble AI",
+      "license": "MIT",
+      "license_url": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
+      "license_acknowledgement_required": false,
+      "adapter": "chatterbox",
+      "variant": "turbo",
+      "hf_repo": "ResembleAI/chatterbox-turbo",
+      "hf_files": ["*.safetensors", "*.json", "*.txt", "*.pt", "*.model"],
+      "description": "Fast English cloning that understands inline tags like [laugh], [sigh], and [whispering] for expressive cues you can write directly in the script. Pick this for short, lively English copy.",
+      "ratings": { "speed": 9.5, "quality": 8.4 },
+      "approx_size_mb": 3891,
+      "sample_rate": 24000,
+      "ref_clip": { "min_seconds": 5, "max_seconds": 15, "transcript_required": false },
+      "chunking": { "target_chars": 160, "max_chars": 220 },
+      "languages": ["english"],
+      "hardware": ["cpu", "cuda", "mps"],
+      "hardware_notes": { "cpu": "Usable for QA, but intended for GPU/MPS acceleration." },
+      "params": [],
+      "getting_started": {
+        "ref_clip_tips": "Mono WAV at 24 kHz works best; 8–15 seconds is the sweet spot. Keep clips under about 60 seconds — multi-minute references degrade pronunciation. Single speaker, clean, no transcript required.",
+        "text_tips": "The app chunks long inputs automatically at sentence boundaries. Keep sentences punchy — very long sentences are where drift shows up most.",
+        "audio_length_tips": "Each chunk should land under about 20 seconds of audio. Beyond that, expect prosody drift and occasional speaker drift in the tail.",
+        "tags": [
+          { "tag": "[clear throat]", "group": "Non-verbal" },
+          { "tag": "[sigh]", "group": "Non-verbal" },
+          { "tag": "[shush]", "group": "Non-verbal" },
+          { "tag": "[cough]", "group": "Non-verbal" },
+          { "tag": "[groan]", "group": "Non-verbal" },
+          { "tag": "[sniff]", "group": "Non-verbal" },
+          { "tag": "[gasp]", "group": "Non-verbal" },
+          { "tag": "[chuckle]", "group": "Non-verbal" },
+          { "tag": "[laugh]", "group": "Non-verbal" },
+          { "tag": "[angry]", "group": "Emotion" },
+          { "tag": "[surprised]", "group": "Emotion" },
+          { "tag": "[fear]", "group": "Emotion" },
+          { "tag": "[crying]", "group": "Emotion" },
+          { "tag": "[happy]", "group": "Emotion" },
+          { "tag": "[sarcastic]", "group": "Emotion" },
+          { "tag": "[dramatic]", "group": "Emotion" },
+          { "tag": "[whispering]", "group": "Emotion" },
+          { "tag": "[narration]", "group": "Register" },
+          { "tag": "[advertisement]", "group": "Register" }
+        ],
+        "tags_note": "Tags are stochastic — place them after punctuation for the highest hit-rate, don't stack two back-to-back, and re-roll the seed if a tag is ignored rather than rewriting.",
+        "sample_prompts": [
+          {
+            "label": "Neutral narration",
+            "text": "The lighthouse keeper logged the wind speed at dawn, noted the colour of the sea, and brewed a second pot of coffee before the relief boat appeared on the horizon."
+          },
+          {
+            "label": "Strong emotion, no tags",
+            "text": "I told you not to touch it. I told you, three times, and you still did it — do you have any idea how long that took me?"
+          },
+          {
+            "label": "Paralinguistic showcase",
+            "text": "[clear throat] Right, [sigh] where were we. Oh — [chuckle] yes, the cake. I left it in the oven for, what, an hour? [gasp] Two hours? [laugh] Honestly, the smoke alarm did most of the talking. [whispering] Don't tell my mother."
+          }
+        ],
+        "gotchas": [
+          "Tags are stochastic — re-roll the seed if one misfires, and don't stack tags back-to-back.",
+          "One speaker per reference — mixing voices in a single clip produces unstable, averaged output.",
+          "Multi-minute references degrade pronunciation; trim to under 60 seconds.",
+          "Every output carries an inaudible PerTh watermark — provenance can't be stripped."
+        ]
+      }
+    },
+    {
+      "id": "chatterbox-english",
+      "name": "Chatterbox English",
+      "vendor": "Resemble AI",
+      "license": "MIT",
+      "license_url": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
+      "license_acknowledgement_required": false,
+      "adapter": "chatterbox",
+      "variant": "english",
+      "hf_repo": "ResembleAI/chatterbox",
+      "hf_files": ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"],
+      "description": "English cloning with hands-on expressive controls — Exaggeration and Reference adherence sliders push delivery from flat to theatrical. Pick this when you want to dial in prosody yourself.",
+      "ratings": { "speed": 8.0, "quality": 8.3 },
+      "approx_size_mb": 3072,
+      "sample_rate": 24000,
+      "ref_clip": { "min_seconds": 5, "max_seconds": 15, "transcript_required": false },
+      "chunking": { "target_chars": 120, "max_chars": 180 },
+      "languages": ["english"],
+      "hardware": ["cpu", "cuda", "mps"],
+      "hardware_notes": { "cpu": "Usable for QA, but intended for GPU/MPS acceleration." },
+      "params": [
+        {
+          "key": "exaggeration",
+          "label": "Exaggeration",
+          "min": 0.25,
+          "max": 2.0,
+          "step": 0.05,
+          "default": 0.5,
+          "help": "Emotion intensity. 0.5 is neutral; 0.7 reads as expressive; above ~1.3 stability drops. See the model card for value-by-value guidance."
+        },
+        {
+          "key": "cfg_weight",
+          "label": "Reference adherence",
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.05,
+          "default": 0.5,
+          "help": "How tightly delivery tracks the reference. 0.5 is balanced; pair lower values with high Exaggeration, raise toward 0.7+ for tight pacing. See the model card for value-by-value guidance."
+        }
+      ],
+      "getting_started": {
+        "ref_clip_tips": "Mono WAV at 24 kHz, 5–15 seconds, single speaker, clean. Heavily accented English is handled poorly — RP and Scottish references commonly drift to other accents.",
+        "text_tips": "The app chunks long inputs automatically. Very short inputs (under about 10 characters, e.g. \"Hi!\") can hallucinate — give the model at least a full clause to work with.",
+        "audio_length_tips": "Hard ceiling around 40 seconds per call; 300 characters at default settings lands around 20–25 seconds.",
+        "param_guidance": [
+          {
+            "key": "exaggeration",
+            "values": [
+              { "setting": "0.3", "effect": "Audiobook neutral: flat, slightly slower delivery." },
+              { "setting": "0.5 (default)", "effect": "Natural prosody — the safe default." },
+              { "setting": "0.7", "effect": "Noticeably more expressive; pair with Reference adherence ≈ 0.3 for ad or podcast energy." },
+              { "setting": "1.0+", "effect": "Character-voice territory; stability drops above about 1.3." }
+            ]
+          },
+          {
+            "key": "cfg_weight",
+            "values": [
+              { "setting": "0.0", "effect": "Use only to suppress accent transfer from the reference clip." },
+              { "setting": "0.3", "effect": "Best paired with high Exaggeration; looser pacing, more emotional headroom." },
+              { "setting": "0.5 (default)", "effect": "Balanced — suits most prompts." },
+              { "setting": "0.7+", "effect": "Tight pacing match to the reference; emotional range collapses; brittle with high Exaggeration." }
+            ]
+          }
+        ],
+        "sample_prompts": [
+          {
+            "label": "Exaggeration sweep (try 0.3 / 0.7 / 1.2 with Reference adherence 0.4)",
+            "text": "I cannot believe what just happened. After all these years, after everything we went through together — you actually did it. You really did it."
+          },
+          {
+            "label": "Benefits from low Reference adherence (~0.3, Exaggeration 0.7)",
+            "text": "There's a kind of silence, late at night, when the wind drops and the house settles, that feels almost like the world is holding its breath alongside you."
+          },
+          {
+            "label": "Benefits from high Reference adherence (~0.7, Exaggeration 0.5)",
+            "text": "Introducing the all-new Aria Pro: lighter, faster, and built to last."
+          }
+        ],
+        "gotchas": [
+          "Very short inputs (under about 10 characters) can hallucinate — give it at least a full clause.",
+          "High Exaggeration paired with high Reference adherence is brittle and frequently produces clipped, fast gibberish.",
+          "Paralinguistic tags like [laugh] are not supported here — switch to Chatterbox Turbo for inline tags.",
+          "Every output carries an inaudible PerTh watermark — provenance can't be stripped."
+        ]
+      }
+    }
+  ]
+}
