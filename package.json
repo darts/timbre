@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -12,7 +16,8 @@
     "tauri:build": "tauri build",
     "release:validate": "node scripts/validate-release-inputs.mjs",
     "release:checksums": "node scripts/write-artifact-checksums.mjs",
-    "build:icons": "node scripts/build-icons.mjs"
+    "build:icons": "node scripts/build-icons.mjs",
+    "setup:windows": "powershell -ExecutionPolicy Bypass -File scripts/setup-windows.ps1"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.20",
@@ -31,7 +36,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
-    "@types/node": "^25.6.0",
+    "@types/node": "^24.0.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",

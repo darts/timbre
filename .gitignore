@@ -25,5 +25,3 @@ result-*
 
 # local-only env overrides
 .env
-
-._*

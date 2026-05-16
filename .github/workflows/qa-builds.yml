@@ -32,13 +32,22 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: tauri-${{ matrix.platform }}
+
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Verify Windows build environment
+        if: runner.os == 'Windows'
+        run: powershell -ExecutionPolicy Bypass -File scripts/verify-build-env.ps1
 
       - name: Validate release inputs
         run: pnpm release:validate
@@ -46,14 +55,11 @@ jobs:
       - name: Typecheck frontend
         run: pnpm exec tsc --noEmit --pretty false
 
-      - name: Check Rust shell
-        run: cargo check --manifest-path src-tauri/Cargo.toml
-
       - name: Build unsigned Tauri bundles
-        run: pnpm tauri:build -- --bundles ${{ matrix.bundles }}
+        run: pnpm tauri:build --bundles ${{ matrix.bundles }}
 
       - name: Write artifact checksums
-        run: pnpm release:checksums -- ${{ matrix.platform }}
+        run: pnpm release:checksums ${{ matrix.platform }}
 
       - name: Upload bundles
         uses: actions/upload-artifact@v4

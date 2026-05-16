@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://aka.ms/configuration-dsc-schema/0.2
+# Declarative system-toolchain spec for Windows dev/build of Timbre.
+# Consumed by `winget configure --file scripts\windows-deps.winget`. This is
+# the Windows analogue of flake.nix's `common` package list.
+properties:
+  configurationVersion: 0.2.0
+  resources:
+    - resource: Microsoft.WinGet.DSC/WinGetPackage
+      id: vctools
+      directives:
+        description: VS 2022 Build Tools (MSVC v143 + Windows 11 SDK)
+        allowPrerelease: false
+      settings:
+        id: Microsoft.VisualStudio.2022.BuildTools
+        source: winget
+        useLatest: true
+        custom: "--override \"--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended\""
+    - resource: Microsoft.WinGet.DSC/WinGetPackage
+      id: rustup
+      directives:
+        description: Rust toolchain installer
+      settings:
+        id: Rustlang.Rustup
+        source: winget
+    - resource: Microsoft.WinGet.DSC/WinGetPackage
+      id: nodejs
+      directives:
+        description: Node.js LTS (matches CI workflow node-version)
+      settings:
+        id: OpenJS.NodeJS.LTS
+        source: winget
+    - resource: Microsoft.WinGet.DSC/WinGetPackage
+      id: webview2
+      directives:
+        description: Microsoft Edge WebView2 Runtime (Tauri's webview backend)
+      settings:
+        id: Microsoft.EdgeWebView2Runtime
+        source: winget
+    - resource: Microsoft.WinGet.DSC/WinGetPackage
+      id: git
+      directives:
+        description: Git for Windows
+      settings:
+        id: Git.Git
+        source: winget
