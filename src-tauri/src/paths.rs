@@ -89,11 +89,6 @@ pub fn resource_path(app: &AppHandle, relative: impl AsRef<Path>) -> Result<Path
     if cfg!(debug_assertions) {
         if let Some(src) = source_dir_path(relative) {
             if src.exists() {
-                tracing::debug!(
-                    "resource_path {} resolved to source tree: {}",
-                    relative.display(),
-                    src.display()
-                );
                 return Ok(src);
             }
         }
@@ -114,29 +109,11 @@ pub fn resource_path(app: &AppHandle, relative: impl AsRef<Path>) -> Result<Path
         }),
     ];
 
-    let mut tried: Vec<String> = Vec::new();
-    for cand in candidates.iter().flatten() {
-        if cand.exists() {
-            tracing::debug!(
-                "resource_path {} -> {}",
-                relative.display(),
-                cand.display()
-            );
-            return Ok(cand.clone());
-        }
-        tried.push(cand.display().to_string());
-    }
-
-    tracing::error!(
-        "resource_path could not find {}; tried: {}",
-        relative.display(),
-        tried.join(" | ")
-    );
-    Err(anyhow!(
-        "resource not found: {} (tried: {})",
-        relative.display(),
-        tried.join(" | ")
-    ))
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|p| p.exists())
+        .ok_or_else(|| anyhow!("resource not found: {}", relative.display()))
 }
 
 /// Resolve a path relative to the workspace source root in debug builds.

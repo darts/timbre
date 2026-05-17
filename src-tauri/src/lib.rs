@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::Layer;
-
 mod backend_pack;
 mod ipc;
 mod paths;
 mod sidecar;
 
 pub fn run() {
-    init_logging();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     let sidecar = Arc::new(sidecar::Sidecar::new());
     let backend = Arc::new(backend_pack::BackendManager::new());
@@ -36,44 +37,4 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-/// Send tracing output to stderr (for dev / terminal launches) and to a
-/// daily-rotated file under the OS cache dir. The file sink is the only
-/// way to see sidecar diagnostics in the release Windows build, which has
-/// `windows_subsystem = "windows"` and therefore no attached console.
-///
-/// We deliberately leak the `WorkerGuard` so the non-blocking writer keeps
-/// flushing for the lifetime of the process; dropping it would drop log
-/// lines mid-shutdown.
-fn init_logging() {
-    let filter = || {
-        tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
-    };
-
-    let log_dir = paths::cache_dir().join("logs");
-    let _ = std::fs::create_dir_all(&log_dir);
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "timbre.log");
-    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
-    Box::leak(Box::new(guard));
-
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_writer(std::io::stderr)
-                .with_filter(filter()),
-        )
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_writer(file_writer)
-                .with_ansi(false)
-                .with_filter(filter()),
-        )
-        .init();
-
-    tracing::info!(
-        "timbre starting; log dir = {}",
-        log_dir.display()
-    );
 }

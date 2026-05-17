@@ -125,15 +125,6 @@ impl Sidecar {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        // No `windows_subsystem = "console"` parent in release means any
-        // console-subsystem child (python.exe) pops its own window unless
-        // CREATE_NO_WINDOW (0x08000000) is set.
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000);
-        }
-
         let mut child = cmd
             .spawn()
             .with_context(|| format!("spawn {}", py.display()))?;
