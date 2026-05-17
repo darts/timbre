@@ -1,0 +1,6 @@
+# Windows scripts must check out with CRLF endings — cmd.exe miscompiles
+# multi-line `if (...) (...)` blocks when batch files use bare LF, and some
+# PowerShell installs warn on LF-terminated .ps1 files.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf

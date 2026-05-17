@@ -421,8 +421,16 @@ async fn run_uv(args: &[&str]) -> Result<()> {
     if !uv.exists() {
         bail!("uv binary missing at {}", uv.display());
     }
-    let output = Command::new(&uv)
-        .args(args)
+    let mut cmd = Command::new(&uv);
+    cmd.args(args);
+    // Hide the console window every short-lived uv invocation would
+    // otherwise allocate (release Windows builds have no parent console).
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let output = cmd
         .output()
         .await
         .with_context(|| format!("spawn uv {:?}", args))?;
