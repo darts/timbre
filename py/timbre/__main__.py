@@ -21,6 +21,12 @@ import warnings
 
 def _quarantine_stdout() -> None:
     real_stdout_fd = os.dup(1)
+    # On Windows the CRT may have opened fd 1 in text mode (O_TEXT), which
+    # would translate every '\n' in our JSON-RPC framing to '\r\n' on the
+    # wire and break the Rust frame reader.
+    if sys.platform == "win32":
+        import msvcrt
+        msvcrt.setmode(real_stdout_fd, os.O_BINARY)
     # Redirect fd 1 -> stderr at the OS level. Any library that writes to
     # stdout from now on is rerouted to stderr; Rust's stderr logger picks
     # it up.

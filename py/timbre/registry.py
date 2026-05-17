@@ -44,7 +44,7 @@ def _manifest_path() -> Path:
 
 @cache
 def all_models() -> list[ModelInfo]:
-    data = json.loads(_manifest_path().read_text())
+    data = json.loads(_manifest_path().read_text(encoding="utf-8"))
     out = []
     for m in data["models"]:
         out.append(

@@ -51,12 +51,14 @@ struct Pending {
 pub struct Sidecar {
     inner: Mutex<Option<SidecarHandle>>,
     next_id: AtomicU64,
+    next_launch_id: AtomicU64,
     pending: Arc<Mutex<Pending>>,
 }
 
 struct SidecarHandle {
     child: Child,
     pid: Option<u32>,
+    launch_id: u64,
     write_tx: mpsc::Sender<Vec<u8>>,
 }
 
@@ -65,6 +67,7 @@ impl Sidecar {
         Self {
             inner: Mutex::new(None),
             next_id: AtomicU64::new(1),
+            next_launch_id: AtomicU64::new(1),
             pending: Arc::new(Mutex::new(Pending::default())),
         }
     }
@@ -84,15 +87,14 @@ impl Sidecar {
     }
 
     pub async fn start(self: Arc<Self>, app: AppHandle) -> Result<SidecarStatus> {
-        {
-            let g = self.inner.lock().await;
-            if g.is_some() {
-                let h = g.as_ref().unwrap();
-                return Ok(SidecarStatus {
-                    running: true,
-                    pid: h.pid,
-                });
-            }
+        // Keep this lock through spawn so concurrent `start_sidecar` calls
+        // cannot launch competing children and then drop each other's pipes.
+        let mut g = self.inner.lock().await;
+        if let Some(h) = g.as_ref() {
+            return Ok(SidecarStatus {
+                running: true,
+                pid: h.pid,
+            });
         }
 
         let py = paths::venv_python();
@@ -125,6 +127,14 @@ impl Sidecar {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        // No `windows_subsystem = "console"` parent in release means any
+        // console-subsystem child (python.exe) pops its own window unless
+        // CREATE_NO_WINDOW (0x08000000) is set.
+        #[cfg(target_os = "windows")]
+        {
+            cmd.creation_flags(0x08000000);
+        }
+
         let mut child = cmd
             .spawn()
             .with_context(|| format!("spawn {}", py.display()))?;
@@ -133,17 +143,24 @@ impl Sidecar {
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
         let stderr = child.stderr.take();
 
+        let launch_id = self.next_launch_id.fetch_add(1, Ordering::SeqCst);
         let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(64);
         spawn_writer(stdin, write_rx);
-        spawn_reader(stdout, app.clone(), self.pending.clone(), self.clone());
+        spawn_reader(
+            stdout,
+            app.clone(),
+            self.pending.clone(),
+            self.clone(),
+            launch_id,
+        );
         if let Some(err) = stderr {
             spawn_stderr_logger(err, app.clone());
         }
 
-        let mut g = self.inner.lock().await;
         *g = Some(SidecarHandle {
             child,
             pid,
+            launch_id,
             write_tx,
         });
         Ok(SidecarStatus { running: true, pid })
@@ -228,6 +245,7 @@ fn spawn_reader(
     app: AppHandle,
     pending: Arc<Mutex<Pending>>,
     sidecar: Arc<Sidecar>,
+    launch_id: u64,
 ) {
     tokio::spawn(async move {
         let mut reader = BufReader::new(stdout);
@@ -251,20 +269,27 @@ fn spawn_reader(
         // the handle so the next `call()` or `start()` triggers a fresh
         // spawn instead of writing into a broken pipe forever. Also fail
         // any pending requests so the UI sees a clean error rather than
-        // hanging.
+        // hanging. A reader from an older launch may exit after a newer
+        // process is current, so only the current launch owns teardown.
+        let mut cleared_current = false;
         {
             let mut g = sidecar.inner.lock().await;
-            *g = None;
+            if g.as_ref().is_some_and(|h| h.launch_id == launch_id) {
+                *g = None;
+                cleared_current = true;
+            }
         }
-        let mut p = pending.lock().await;
-        for (_, tx) in p.map.drain() {
-            let _ = tx.send(Err(RpcErrorPayload {
-                code: -32002,
-                message: format!("sidecar exited: {exit_reason}"),
-                data: None,
-            }));
+        if cleared_current {
+            let mut p = pending.lock().await;
+            for (_, tx) in p.map.drain() {
+                let _ = tx.send(Err(RpcErrorPayload {
+                    code: -32002,
+                    message: format!("sidecar exited: {exit_reason}"),
+                    data: None,
+                }));
+            }
+            let _ = app.emit("sidecar:died", &exit_reason);
         }
-        let _ = app.emit("sidecar:died", &exit_reason);
     });
 }
 
