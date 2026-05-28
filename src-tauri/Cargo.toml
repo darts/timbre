@@ -40,3 +40,13 @@ tracing-appender = "0.2"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+# GPU vendor detection at FirstRun (DXGI adapter enumeration). Pinned to the
+# `windows` major already resolved by Tauri (see Cargo.lock) so we don't pull a
+# second copy of the crate.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }

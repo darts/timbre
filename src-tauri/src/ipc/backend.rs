@@ -10,6 +10,7 @@ pub struct HostInfo {
     pub arch: &'static str,
     pub is_macos: bool,
     pub is_windows: bool,
+    pub is_linux: bool,
     pub is_apple_silicon: bool,
 }
 
@@ -20,8 +21,18 @@ pub fn host_info() -> HostInfo {
         arch: std::env::consts::ARCH,
         is_macos: cfg!(target_os = "macos"),
         is_windows: cfg!(target_os = "windows"),
+        is_linux: cfg!(target_os = "linux"),
         is_apple_silicon: cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
     }
+}
+
+/// Probe for NVIDIA / AMD GPUs so FirstRun can recommend a backend pack.
+/// Runs before the venv exists, so this is OS-level detection (see `crate::gpu`).
+/// Returns `{ has_nvidia, has_amd, probed }`; `probed: false` means we couldn't
+/// tell, and the UI falls back to showing every applicable backend.
+#[tauri::command]
+pub fn detect_backends() -> crate::gpu::GpuVendors {
+    crate::gpu::detect()
 }
 
 #[tauri::command]

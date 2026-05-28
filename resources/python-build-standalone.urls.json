@@ -32,11 +32,23 @@
         "url": "https://github.com/astral-sh/uv/releases/download/0.11.10/uv-x86_64-pc-windows-msvc.zip",
         "sha256": "7a0c424c7bc55a74751f13592235953ebbe182fa00355f7ae3fb7ab734a51638"
       }
+    },
+    "linux-x86_64": {
+      "python": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260504/cpython-3.12.13+20260504-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        "sha256": "476a802eab6d76557147c14954a04875cb0a27d731b7323d837e0d7a36ed60d1"
+      },
+      "uv": {
+        "url": "https://github.com/astral-sh/uv/releases/download/0.11.10/uv-x86_64-unknown-linux-gnu.tar.gz",
+        "sha256": "077e1a0777bcf516e02f4ef245e269c8d1baa780438e4c50e09c5c997f85538a"
+      }
     }
   },
   "torch_index_urls": {
     "cpu": "https://download.pytorch.org/whl/cpu",
-    "cuda": "https://download.pytorch.org/whl/cu124",
-    "mps": null
+    "cuda": "https://download.pytorch.org/whl/cu128",
+    "mps": null,
+    "rocm_linux": "https://download.pytorch.org/whl/rocm6.4",
+    "rocm_windows": "https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/"
   }
 }

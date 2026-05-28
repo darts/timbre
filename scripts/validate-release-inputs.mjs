@@ -4,9 +4,9 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-const requiredPlatforms = ["macos-arm64", "windows-x86_64"];
-const requiredBundleTargets = ["app", "dmg", "msi", "nsis"];
-const requiredBackendRequirements = ["base", "cpu", "cuda", "mps"];
+const requiredPlatforms = ["macos-arm64", "windows-x86_64", "linux-x86_64"];
+const requiredBundleTargets = ["app", "dmg", "msi", "nsis", "deb", "appimage", "rpm"];
+const requiredBackendRequirements = ["base", "cpu", "cuda", "mps", "rocm-linux", "rocm-windows"];
 
 const failures = [];
 
@@ -103,6 +103,8 @@ function validateDownloadManifest() {
   assert(manifest.torch_index_urls?.cpu?.startsWith("https://"), "cpu torch index URL missing");
   assert(manifest.torch_index_urls?.cuda?.startsWith("https://"), "cuda torch index URL missing");
   assert(manifest.torch_index_urls?.mps === null, "mps torch index URL should stay null");
+  assert(manifest.torch_index_urls?.rocm_linux?.startsWith("https://"), "rocm_linux torch index URL missing");
+  assert(manifest.torch_index_urls?.rocm_windows?.startsWith("https://"), "rocm_windows torch index URL missing");
 }
 
 function validateRequirementsAndModels() {

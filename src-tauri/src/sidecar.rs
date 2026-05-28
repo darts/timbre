@@ -123,6 +123,10 @@ impl Sidecar {
             // import. The Python sidecar also has explicit CPU retry policy
             // for selected accelerator failures.
             .env("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+            // hf_xet writes the `.incomplete` file in ~67 MB bursts, which
+            // makes our filesystem-polling progress bar jump in chunks.
+            // Plain HTTP grows it in ~10 MB / 400 ms steps — smooth.
+            .env("HF_HUB_DISABLE_XET", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

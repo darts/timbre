@@ -153,9 +153,11 @@ def _sibling_size(sibling: Any) -> int | None:
 
 
 def _sibling_blob_id(sibling: Any) -> str | None:
-    value = getattr(sibling, "blob_id", None)
+    # HF cache blob filenames use the LFS payload hash for LFS-backed files,
+    # not the small Git pointer object's blob_id.
+    value = _sibling_lfs_value(sibling, "sha256") or _sibling_lfs_value(sibling, "oid")
     if not value:
-        value = _sibling_lfs_value(sibling, "sha256") or _sibling_lfs_value(sibling, "oid")
+        value = getattr(sibling, "blob_id", None)
     return str(value) if value else None
 
 

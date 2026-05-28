@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type BackendKind = "cpu" | "cuda" | "mps";
+export type BackendKind = "cpu" | "cuda" | "mps" | "rocm";
 
 export interface BackendStatus {
   installed: boolean;
@@ -19,11 +19,20 @@ export interface HostInfo {
   arch: string;
   is_macos: boolean;
   is_windows: boolean;
+  is_linux: boolean;
   is_apple_silicon: boolean;
+}
+
+export interface BackendDetection {
+  has_nvidia: boolean;
+  has_amd: boolean;
+  /** false = couldn't probe; the UI then shows all applicable backends with CPU selected. */
+  probed: boolean;
 }
 
 export const tauri = {
   hostInfo: () => invoke<HostInfo>("host_info"),
+  detectBackends: () => invoke<BackendDetection>("detect_backends"),
   backendStatus: () => invoke<BackendStatus>("backend_status"),
   installBackendPack: (backend: BackendKind) =>
     invoke<BackendStatus>("install_backend_pack", { backend }),

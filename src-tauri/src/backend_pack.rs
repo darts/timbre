@@ -1,12 +1,16 @@
 //! First-run backend installer.
 //!
-//! Steps for a chosen `Backend` (cpu / cuda / mps):
-//!   1. Detect platform (macos-arm64, macos-x86_64, windows-x86_64).
+//! Steps for a chosen `Backend` (cpu / cuda / mps / rocm):
+//!   1. Detect platform (macos-arm64, macos-x86_64, windows-x86_64, linux-x86_64).
 //!   2. Download python-build-standalone tarball -> extract to <data>/python.
 //!   3. Download uv -> place in <data>/bin/uv.
 //!   4. uv venv <data>/venv --python <data>/python/python3
 //!   5. uv pip install -r requirements/{backend}.txt --index-url <pytorch index>
 //!   6. uv pip install -r requirements/base.txt
+//!
+//! ROCm is Linux- or Windows-only; on macOS the install() guard rejects it
+//! since PyTorch ships no macOS ROCm wheels. The ROCm requirements file +
+//! torch index URL both branch on the host OS at compile time.
 //!
 //! Progress is reported via a `BackendProgress` channel that the IPC layer
 //! converts into Tauri events.
@@ -32,6 +36,7 @@ pub enum Backend {
     Cpu,
     Cuda,
     Mps,
+    Rocm,
 }
 
 impl Backend {
@@ -40,16 +45,41 @@ impl Backend {
             Backend::Cpu => "cpu.txt",
             Backend::Cuda => "cuda.txt",
             Backend::Mps => "mps.txt",
+            // ROCm wheels diverge by host OS — Linux uses stable rocm6.4, Windows
+            // uses the preview nightly index — so the requirements file (which
+            // also pins torch version) is platform-specific.
+            Backend::Rocm => {
+                if cfg!(target_os = "windows") {
+                    "rocm-windows.txt"
+                } else {
+                    "rocm-linux.txt"
+                }
+            }
         }
     }
 
-    /// PyTorch wheel index URL. `None` means use the default PyPI index
-    /// (used for MPS — Apple-silicon torch wheels are on the default index).
+    /// PyTorch wheel index URL. `None` means no `--index-url` flag is passed
+    /// to `uv pip install`; uv falls back to the default PyPI index for any
+    /// transitive deps the requirements file declares.
+    ///
+    /// Notable Nones:
+    /// - `Mps`: macOS arm64 torch wheels are on the default PyPI index already.
+    /// - `Rocm` on Windows: PyTorch's `whl/rocm6.X` and `whl/nightly/rocm6.X`
+    ///   indexes are Linux-only. AMD distributes Windows ROCm wheels at
+    ///   literal URLs in `rocm-windows.txt`; pointing uv at the PyTorch ROCm
+    ///   index would resolve to Linux wheels and break the install.
     pub fn torch_index_url(self) -> Option<&'static str> {
         match self {
             Backend::Cpu => Some("https://download.pytorch.org/whl/cpu"),
-            Backend::Cuda => Some("https://download.pytorch.org/whl/cu124"),
+            Backend::Cuda => Some("https://download.pytorch.org/whl/cu128"),
             Backend::Mps => None,
+            Backend::Rocm => {
+                if cfg!(target_os = "windows") {
+                    None
+                } else {
+                    Some("https://download.pytorch.org/whl/rocm6.4")
+                }
+            }
         }
     }
 }
@@ -96,6 +126,9 @@ impl BackendManager {
 
     pub async fn install(self: Arc<Self>, app: AppHandle, backend: Backend) -> Result<()> {
         let _g = self.install_lock.lock().await;
+        if backend == Backend::Rocm && cfg!(target_os = "macos") {
+            bail!("ROCm backend is not supported on macOS — pick MPS or CPU");
+        }
         emit_progress(&app, "starting", 0.0, format!("installing {:?}", backend));
 
         let urls = load_urls(&app)?;
@@ -278,6 +311,7 @@ fn current_platform() -> Result<&'static str> {
         ("macos", "aarch64") => "macos-arm64",
         ("macos", "x86_64") => "macos-x86_64",
         ("windows", "x86_64") => "windows-x86_64",
+        ("linux", "x86_64") => "linux-x86_64",
         (os, arch) => bail!("unsupported platform: {os}/{arch}"),
     })
 }

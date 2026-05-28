@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Cpu, Cpu as Gpu, Apple, Loader2, Check, AlertCircle } from "lucide-react";
+import { Cpu, Cpu as Gpu, Apple, Flame, Loader2, Check, AlertCircle } from "lucide-react";
 import { BackendKind, tauri } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 
@@ -32,7 +32,16 @@ export function FirstRun() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const host = useQuery({ queryKey: ["host-info"], queryFn: tauri.hostInfo });
-  const [choice, setChoice] = useState<BackendKind | null>("cpu");
+  // Probe for an NVIDIA / AMD GPU to recommend a backend. Skipped on macOS:
+  // we ship only the arm64 build, which always means MPS — nothing to detect.
+  const detection = useQuery({
+    queryKey: ["backend-detection"],
+    queryFn: tauri.detectBackends,
+    enabled: !!host.data && !host.data.is_macos,
+  });
+  // `null` = follow the recommendation; set once the user picks a card.
+  const [choice, setChoice] = useState<BackendKind | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
 
   useEffect(() => {
@@ -55,15 +64,11 @@ export function FirstRun() {
   const installing = install.isPending;
   const percent = progress ? Math.round(progress.fraction * 100) : 0;
 
-  useEffect(() => {
-    if (host.data?.is_apple_silicon) {
-      setChoice("mps");
-    }
-  }, [host.data?.is_apple_silicon]);
-
-  const options = useMemo<BackendOption[]>(() => {
+  // Every backend installable on this platform, before detection filtering.
+  const applicable = useMemo<BackendOption[]>(() => {
     const isMac = host.data?.is_macos ??
       (typeof navigator !== "undefined" && navigator.platform.toLowerCase().includes("mac"));
+    const isWindows = host.data?.is_windows ?? false;
     const opts: BackendOption[] = [
       {
         kind: "cpu",
@@ -80,15 +85,72 @@ export function FirstRun() {
         icon: <Apple className="w-5 h-5" />,
       });
     } else if (!isMac) {
+      // Non-Mac (Linux or Windows) gets both CUDA and ROCm options. ROCm
+      // wheels exist for Linux (stable) and Windows (nightly preview).
+      opts.unshift({
+        kind: "rocm",
+        title: "AMD GPU/APU (ROCm + CPU)",
+        subtitle: isWindows
+          ? "ROCm preview. Requires AMD Adrenalin AI driver with ROCm runtime."
+          : "ROCm 6.4. Supported Radeon and Ryzen AI hardware only.",
+        icon: <Flame className="w-5 h-5" />,
+      });
       opts.unshift({
         kind: "cuda",
         title: "NVIDIA GPU (CUDA + CPU)",
-        subtitle: "Fastest with a recent NVIDIA card, with CPU available for fallback.",
+        subtitle: "PyTorch 2.8 cu128. RTX 20 / GTX 16+ recommended; Maxwell/Pascal run on CPU.",
         icon: <Gpu className="w-5 h-5" />,
       });
     }
     return opts;
-  }, [host.data?.is_apple_silicon, host.data?.is_macos]);
+  }, [host.data?.is_apple_silicon, host.data?.is_macos, host.data?.is_windows]);
+
+  // GPU backends actually detected on this machine (Apple Silicon implies MPS).
+  const det = detection.data;
+  const detectedKinds = useMemo<BackendKind[]>(() => {
+    if (host.data?.is_apple_silicon) return ["mps"];
+    const ks: BackendKind[] = [];
+    if (det?.has_nvidia) ks.push("cuda");
+    if (det?.has_amd) ks.push("rocm");
+    return ks;
+  }, [host.data?.is_apple_silicon, det?.has_nvidia, det?.has_amd]);
+
+  // Recommendation priority: MPS > CUDA > ROCm > CPU (NVIDIA wins ties).
+  const recommended: BackendKind = host.data?.is_apple_silicon
+    ? "mps"
+    : det?.has_nvidia
+      ? "cuda"
+      : det?.has_amd
+        ? "rocm"
+        : "cpu";
+
+  // Collapse to the detected hardware only when we actually found a supported
+  // GPU and the user hasn't expanded the list. Otherwise (couldn't probe, or
+  // no supported GPU) show everything with CPU pre-selected.
+  const hasDetectedGpu =
+    host.data?.is_apple_silicon || (!!det?.probed && detectedKinds.length > 0);
+  const filtered = hasDetectedGpu && !showAll;
+  const displayed = useMemo<BackendOption[]>(
+    () =>
+      filtered
+        ? applicable.filter((o) => o.kind === "cpu" || detectedKinds.includes(o.kind))
+        : applicable,
+    [filtered, applicable, detectedKinds],
+  );
+  const hiddenCount = applicable.length - displayed.length;
+
+  // Auto-selection: follow the recommendation until the user picks a card.
+  const selected = choice ?? recommended;
+  const detectionSettled =
+    !!host.data && (host.data.is_macos || detection.isSuccess || detection.isError);
+  const selectedIsVisible = displayed.some((o) => o.kind === selected);
+  const canInstall = detectionSettled && selectedIsVisible && !installing;
+
+  useEffect(() => {
+    if (choice && filtered && !displayed.some((o) => o.kind === choice)) {
+      setShowAll(true);
+    }
+  }, [choice, filtered, displayed]);
 
   return (
     <div className="min-h-full grid place-items-center p-10">
@@ -101,15 +163,25 @@ export function FirstRun() {
         </p>
 
         <fieldset disabled={installing} className="mt-6 space-y-2">
-          {options.map((o) => (
+          {displayed.map((o) => (
             <BackendCard
               key={o.kind}
               option={o}
-              selected={choice === o.kind}
+              selected={selected === o.kind}
+              recommended={o.kind === recommended}
               disabled={installing}
               onSelect={() => setChoice(o.kind)}
             />
           ))}
+          {filtered && hiddenCount > 0 && (
+            <button
+              type="button"
+              className="pt-1 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
+              onClick={() => setShowAll(true)}
+            >
+              Show all options
+            </button>
+          )}
         </fieldset>
 
         <div className="mt-6 flex items-center justify-between gap-4">
@@ -128,8 +200,8 @@ export function FirstRun() {
           </div>
           <button
             className="btn-primary shrink-0"
-            disabled={!choice || installing}
-            onClick={() => choice && install.mutate(choice)}
+            disabled={!canInstall}
+            onClick={() => canInstall && install.mutate(selected)}
           >
             {installing && <Loader2 className="w-4 h-4 animate-spin" />}
             {installing ? "Installing…" : "Install"}
@@ -181,10 +253,11 @@ interface BackendOption {
 }
 
 function BackendCard({
-  option, selected, disabled, onSelect,
+  option, selected, recommended, disabled, onSelect,
 }: {
   option: BackendOption;
   selected: boolean;
+  recommended: boolean;
   disabled: boolean;
   onSelect: () => void;
 }) {
@@ -206,7 +279,14 @@ function BackendCard({
         {option.icon}
       </div>
       <div className="flex-1">
-        <div className="font-medium">{option.title}</div>
+        <div className="font-medium flex items-center gap-2">
+          {option.title}
+          {recommended && (
+            <span className="rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-indigo-300">
+              Recommended
+            </span>
+          )}
+        </div>
         <div className="text-xs text-zinc-400">{option.subtitle}</div>
       </div>
       {selected && <Check className="w-4 h-4 text-indigo-300" />}

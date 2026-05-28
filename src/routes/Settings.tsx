@@ -150,6 +150,7 @@ export function Settings() {
 function backendLabel(backend?: string | null): string {
   if (backend === "mps") return "MPS + CPU";
   if (backend === "cuda") return "CUDA + CPU";
+  if (backend === "rocm") return "ROCm + CPU";
   if (backend === "cpu") return "CPU";
   return "—";
 }

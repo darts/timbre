@@ -1,0 +1,4 @@
+# Installed with --index-url https://download.pytorch.org/whl/rocm6.4
+# ROCm 6.4 stable: see docs/supported-hardware.md for AMD's Radeon/Ryzen support matrix.
+torch==2.8.0
+torchaudio==2.8.0
