@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::backend_pack::{Backend, BackendManager, BackendStatus};
+use crate::sidecar::Sidecar;
 
 #[derive(serde::Serialize)]
 pub struct HostInfo {
@@ -44,9 +45,11 @@ pub fn backend_status(mgr: State<'_, Arc<BackendManager>>) -> BackendStatus {
 pub async fn install_backend_pack(
     app: AppHandle,
     mgr: State<'_, Arc<BackendManager>>,
+    sidecar: State<'_, Arc<Sidecar>>,
     backend: Backend,
 ) -> Result<BackendStatus, String> {
     let mgr = mgr.inner().clone();
+    sidecar.inner().stop().await.map_err(|e| e.to_string())?;
     mgr.clone()
         .install(app, backend)
         .await
@@ -70,8 +73,10 @@ pub async fn install_model_deps(
 #[tauri::command]
 pub async fn uninstall_backend_pack(
     mgr: State<'_, Arc<BackendManager>>,
+    sidecar: State<'_, Arc<Sidecar>>,
 ) -> Result<BackendStatus, String> {
     let mgr = mgr.inner().clone();
+    sidecar.inner().stop().await.map_err(|e| e.to_string())?;
     mgr.clone().uninstall().await.map_err(|e| e.to_string())?;
     Ok(mgr.status())
 }

@@ -26,6 +26,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::time::{timeout, Duration};
 
 use crate::paths;
 
@@ -171,11 +172,46 @@ impl Sidecar {
     }
 
     pub async fn stop(&self) -> Result<()> {
-        // Try a graceful shutdown first; fall back to kill if unresponsive.
-        let _ = self.call("shutdown", json!({})).await;
+        const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+        const EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+        let _ = timeout(SHUTDOWN_TIMEOUT, self.call("shutdown", json!({}))).await;
         let mut g = self.inner.lock().await;
-        if let Some(mut h) = g.take() {
-            let _ = h.child.kill().await;
+        let Some(h) = g.take() else {
+            return Ok(());
+        };
+        let SidecarHandle {
+            mut child,
+            write_tx,
+            ..
+        } = h;
+        drop(write_tx);
+
+        match timeout(EXIT_TIMEOUT, child.wait()).await {
+            Ok(Ok(status)) => {
+                tracing::debug!("sidecar exited during stop: {status}");
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("waiting for sidecar during stop failed: {e}");
+                child
+                    .kill()
+                    .await
+                    .context("kill sidecar after wait failure")?;
+            }
+            Err(_) => {
+                tracing::warn!("sidecar did not exit after shutdown; killing it");
+                child.kill().await.context("kill unresponsive sidecar")?;
+            }
+        }
+        drop(g);
+
+        let mut p = self.pending.lock().await;
+        for (_, tx) in p.map.drain() {
+            let _ = tx.send(Err(RpcErrorPayload {
+                code: -32003,
+                message: "sidecar stopped".into(),
+                data: None,
+            }));
         }
         Ok(())
     }

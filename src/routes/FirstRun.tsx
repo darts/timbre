@@ -56,6 +56,10 @@ export function FirstRun() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["backend-status"] });
       try { await tauri.startSidecar(); } catch { /* ignore */ }
+      void qc.invalidateQueries({ queryKey: ["sidecar-status"] });
+      void qc.invalidateQueries({ queryKey: ["device-caps"] });
+      void qc.invalidateQueries({ queryKey: ["model-statuses"] });
+      void qc.invalidateQueries({ queryKey: ["synth-history"] });
       nav("/studio", { replace: true });
     },
     onError: () => setProgress(null),
@@ -86,19 +90,19 @@ export function FirstRun() {
       });
     } else if (!isMac) {
       // Non-Mac (Linux or Windows) gets both CUDA and ROCm options. ROCm
-      // wheels exist for Linux (stable) and Windows (nightly preview).
+      // uses AMD's ROCm 7.2.1 wheels on both platforms.
       opts.unshift({
         kind: "rocm",
         title: "AMD GPU/APU (ROCm + CPU)",
         subtitle: isWindows
-          ? "ROCm preview. Requires AMD Adrenalin AI driver with ROCm runtime."
-          : "ROCm 6.4. Supported Radeon and Ryzen AI hardware only.",
+          ? "ROCm 7.2.1 preview. Requires AMD Adrenalin 26.2.2."
+          : "ROCm 7.2.1. Requires AMDGPU/ROCm 7.2.1 drivers.",
         icon: <Flame className="w-5 h-5" />,
       });
       opts.unshift({
         kind: "cuda",
         title: "NVIDIA GPU (CUDA + CPU)",
-        subtitle: "PyTorch 2.8 cu128. RTX 20 / GTX 16+ recommended; Maxwell/Pascal run on CPU.",
+        subtitle: "PyTorch 2.9.1 cu128. RTX 20 / GTX 16+ recommended; Maxwell/Pascal run on CPU.",
         icon: <Gpu className="w-5 h-5" />,
       });
     }

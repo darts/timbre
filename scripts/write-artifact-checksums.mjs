@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const platform = process.argv[2] ?? process.env.TIMBRE_ARTIFACT_PLATFORM ?? "unknown";
 const bundleDir = path.join(root, "src-tauri", "target", "release", "bundle");
 const outputPath = path.join(bundleDir, `${platform}-SHA256SUMS.txt`);
-const artifactExtensions = new Set([".dmg", ".msi", ".exe", ".deb", ".rpm", ".appimage"]);
+const artifactExtensions = new Set([".dmg", ".msi", ".exe", ".deb", ".rpm", ".appimage", ".zip"]);
 
 function walk(dir, results = []) {
   for (const entry of readdirSync(dir)) {

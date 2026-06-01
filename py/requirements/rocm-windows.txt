@@ -1,15 +1,11 @@
-# AMD ROCm-on-Windows PyTorch wheels (preview, rocm-rel-6.4.4, Python 3.12 only).
+# AMD ROCm-on-Windows PyTorch wheels (preview, rocm-rel-7.2.1, Python 3.12 only).
 # PyTorch's whl/rocm6.X and whl/nightly/rocm6.X indexes are Linux-only — AMD
 # distributes Windows wheels at literal URLs from its Radeon repo, so this file
 # lists them directly and Backend::torch_index_url() returns None on Windows.
-# These are alpha/preview builds, not parity with Linux's torch==2.8.0 stable.
-# Source: https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-6.4.4/docs/install/installrad/windows/install-pytorch.html
-# Requires the AMD Adrenalin AI driver with the ROCm runtime installed
-# (the wheels link against driver-shipped DLLs).
+# Source: https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installrad/windows/install-pytorch.html
+# Requires AMD Software Adrenalin 26.2.2 installed first.
 #
-# Note on the version skew (torch 2.8.0a0 / torchaudio 2.6.0a0): this is the
-# AMD-recommended pairing per the install doc above. Do NOT "fix" the version
-# numbers to match without re-checking AMD's compatibility matrices — both are
-# alpha builds cut from AMD's internal branch and tested together.
-https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torch-2.8.0a0%2Bgitfc14c65-cp312-cp312-win_amd64.whl
-https://repo.radeon.com/rocm/windows/rocm-rel-6.4.4/torchaudio-2.6.0a0%2B1a8f621-cp312-cp312-win_amd64.whl
+# The ROCm SDK wheels in rocm-windows-sdk.txt must be installed before these.
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchvision-0.24.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl

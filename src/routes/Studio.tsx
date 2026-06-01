@@ -17,7 +17,12 @@ import {
   Star,
   Trash2,
 } from "lucide-react";
-import { tauri } from "@/lib/ipc";
+import { tauri, type BackendKind } from "@/lib/ipc";
+import {
+  computeModeLabel,
+  deviceTransitionLabel,
+  displayDeviceLabel,
+} from "@/lib/deviceLabels";
 import {
   useModels,
   useModelStatuses,
@@ -25,6 +30,7 @@ import {
   useVoicePromptStatuses,
   useSidecarStatus,
   useDeviceCapabilities,
+  useBackendStatus,
   useSynthHistory,
   useSynthChunks,
 } from "@/lib/queries";
@@ -102,6 +108,7 @@ export function Studio() {
   const { data: voices } = useVoices();
   const { data: sidecar } = useSidecarStatus();
   const { data: caps } = useDeviceCapabilities();
+  const { data: backend } = useBackendStatus();
   const { data: modelStatuses } = useModelStatuses({ refetchInterval: 4000 });
   const simpleMode = useUiSettings((s) => s.simpleMode);
   const showGenerationDiagnostics = useUiSettings((s) => s.showGenerationDiagnostics);
@@ -706,7 +713,10 @@ export function Studio() {
             : <span>○ sidecar starting…</span>}
           {caps && (
             <span className="ml-3">
-              compute: <span className="text-zinc-300">{computeModeLabel(devicePreference, device)}</span>
+              compute:{" "}
+              <span className="text-zinc-300">
+                {computeModeLabel(devicePreference, device, backend?.backend)}
+              </span>
             </span>
           )}
         </div>
@@ -1028,6 +1038,7 @@ export function Studio() {
           progress={displayProgress}
           running={running}
           elapsedMs={uiElapsedMs}
+          backendKind={backend?.backend}
           showDiagnostics={showDetailedDiagnostics}
         />
       )}
@@ -1115,6 +1126,7 @@ export function Studio() {
           <GeneratedRunGroup
             key={group.key}
             group={group}
+            backendKind={backend?.backend}
             showDiagnostics={showDetailedDiagnostics}
             generationInProgress={generationInProgress}
             simpleMode={simpleMode}
@@ -1130,11 +1142,13 @@ function SynthProgressPanel({
   progress,
   running,
   elapsedMs,
+  backendKind,
   showDiagnostics,
 }: {
   progress: SynthProgress | null;
   running: boolean;
   elapsedMs: number;
+  backendKind?: BackendKind | null;
   showDiagnostics: boolean;
 }) {
   const fraction = progress?.fraction;
@@ -1184,11 +1198,20 @@ function SynthProgressPanel({
                   : "—"
             }
           />
-          <Metric label="Requested" value={progress?.requested_device ?? "—"} />
-          <Metric label="Resolved" value={progress?.resolved_device ?? "pending"} />
+          <Metric
+            label="Requested"
+            value={displayDeviceLabel(progress?.requested_device, backendKind) || "—"}
+          />
+          <Metric
+            label="Resolved"
+            value={displayDeviceLabel(progress?.resolved_device, backendKind) || "pending"}
+          />
           <Metric label="Placement" value={progress?.device_detail ?? "pending"} wide />
           {progress?.fallback_device && (
-            <Metric label="Fallback" value={progress.fallback_device} />
+            <Metric
+              label="Fallback"
+              value={displayDeviceLabel(progress.fallback_device, backendKind)}
+            />
           )}
         </div>
       )}
@@ -1206,7 +1229,8 @@ function SynthProgressPanel({
               key={k}
               className="rounded bg-zinc-800/70 px-2 py-1 text-[11px] text-zinc-400"
             >
-              {memoryLabel(k)}: <span className="text-zinc-200">{formatBytesFromBytes(v)}</span>
+              {memoryLabel(k, backendKind)}:{" "}
+              <span className="text-zinc-200">{formatBytesFromBytes(v)}</span>
             </span>
           ))}
         </div>
@@ -1242,11 +1266,12 @@ function Metric({
   );
 }
 
-function memoryLabel(k: string): string {
+function memoryLabel(k: string, backend: BackendKind | null | undefined): string {
+  const acceleratorPrefix = backend === "rocm" ? "rocm " : "cuda ";
   return k
     .replace(/_bytes$/, "")
     .replace(/^mps_/, "mps ")
-    .replace(/^cuda_/, "cuda ")
+    .replace(/^cuda_/, acceleratorPrefix)
     .replaceAll("_", " ");
 }
 
@@ -1434,14 +1459,18 @@ function synthesisGroupStatus(runs: SynthesisHistoryItem[]): string {
   return runs[0]?.status ?? "pending";
 }
 
-function runDeviceLabel(run: SynthesisHistoryItem): string {
-  return run.resolved_device
-    ? `${run.requested_device} -> ${run.resolved_device}`
-    : run.requested_device;
+function runDeviceLabel(
+  run: SynthesisHistoryItem,
+  backend: BackendKind | null | undefined,
+): string {
+  return deviceTransitionLabel(run.requested_device, run.resolved_device, backend);
 }
 
-function synthesisGroupDeviceLabel(runs: SynthesisHistoryItem[]): string {
-  const labels = new Set(runs.map(runDeviceLabel).filter(Boolean));
+function synthesisGroupDeviceLabel(
+  runs: SynthesisHistoryItem[],
+  backend: BackendKind | null | undefined,
+): string {
+  const labels = new Set(runs.map((run) => runDeviceLabel(run, backend)).filter(Boolean));
   if (labels.size === 0) return "";
   if (labels.size === 1) return [...labels][0];
   return "mixed devices";
@@ -1467,12 +1496,14 @@ async function exportSynthesisAudio(
 
 function GeneratedRunGroup({
   group,
+  backendKind,
   showDiagnostics,
   generationInProgress,
   simpleMode,
   onUseRun,
 }: {
   group: GeneratedRunGroupData;
+  backendKind?: BackendKind | null;
   showDiagnostics: boolean;
   generationInProgress: boolean;
   simpleMode: boolean;
@@ -1510,7 +1541,7 @@ function GeneratedRunGroup({
 
   const groupStatus = synthesisGroupStatus(group.runs);
   const otherRuns = group.runs.filter((run) => run.id !== primary.id);
-  const deviceInfo = showDiagnostics ? synthesisGroupDeviceLabel(group.runs) : "";
+  const deviceInfo = showDiagnostics ? synthesisGroupDeviceLabel(group.runs, backendKind) : "";
   const voiceDeleted = group.runs.some((run) => run.voice_deleted);
   const modelDeleted = group.runs.some((run) => run.model_deleted);
   const showGroupStatus = groupStatus !== "ready";
@@ -1596,6 +1627,7 @@ function GeneratedRunGroup({
               <GeneratedTake
                 key={run.id}
                 run={run}
+                backendKind={backendKind}
                 canSelectBest={canSelectBest}
                 showDiagnostics={showDiagnostics}
                 generationInProgress={generationInProgress}
@@ -1706,6 +1738,7 @@ function GeneratedRunGroup({
 
 function GeneratedTake({
   run,
+  backendKind,
   takeLabel,
   canSelectBest,
   showDiagnostics,
@@ -1714,6 +1747,7 @@ function GeneratedTake({
   onUseRun,
 }: {
   run: SynthesisHistoryItem;
+  backendKind?: BackendKind | null;
   takeLabel?: string;
   canSelectBest: boolean;
   showDiagnostics: boolean;
@@ -1727,7 +1761,7 @@ function GeneratedTake({
   const chunks = useSynthChunks(run.id, { enabled: !simpleMode && detailsOpen });
   const modelMeta = models?.find((m) => m.id === run.model_id);
   const playable = run.status === "ready" && !!run.final_audio_path;
-  const deviceInfo = runDeviceLabel(run);
+  const deviceInfo = runDeviceLabel(run, backendKind);
   const exportAudio = useMutation({
     mutationFn: () => exportSynthesisAudio(run, takeLabel),
   });
@@ -2138,11 +2172,6 @@ function resolveDevicePreference(
   if (caps?.cuda) return "cuda";
   if (caps?.mps) return "mps";
   return "cpu";
-}
-
-function computeModeLabel(preference: DevicePreference, device: string): string {
-  if (preference === "auto") return `Auto (${device.toUpperCase()})`;
-  return device.toUpperCase();
 }
 
 function safeFilename(input: string): string {

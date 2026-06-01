@@ -1,4 +1,7 @@
-# Installed with --index-url https://download.pytorch.org/whl/rocm6.4
-# ROCm 6.4 stable: see docs/supported-hardware.md for AMD's Radeon/Ryzen support matrix.
-torch==2.8.0
-torchaudio==2.8.0
+# AMD ROCm-on-Linux PyTorch wheels (ROCm 7.2.1, Python 3.12 only).
+# Source: https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installrad/native_linux/install-pytorch.html
+# Requires the system AMDGPU/ROCm 7.2.1 driver stack installed first.
+https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1.lw.gitff65f5bc-cp312-cp312-linux_x86_64.whl
+https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/torchvision-0.24.0%2Brocm7.2.1.gitb919bd0c-cp312-cp312-linux_x86_64.whl
+https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/torchaudio-2.9.0%2Brocm7.2.1.gite3c6ee2b-cp312-cp312-linux_x86_64.whl
+https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/triton-3.5.1%2Brocm7.2.1.gita272dfa8-cp312-cp312-linux_x86_64.whl

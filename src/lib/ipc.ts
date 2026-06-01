@@ -7,6 +7,8 @@ export interface BackendStatus {
   backend: BackendKind | null;
   python_path: string | null;
   venv_path: string | null;
+  pack_version: string | null;
+  stale: boolean;
 }
 
 export interface SidecarStatus {
