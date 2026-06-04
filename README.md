@@ -1,6 +1,8 @@
 # timbre
 Voice cloning with open models on your machine.
 
+![App Screenshot](./media/app_screenshot.png)
+
 ## How to
 
 ### Install
