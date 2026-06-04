@@ -2090,7 +2090,7 @@ function GeneratedTake({
           )}
           {playable && (
             <>
-              {!simpleMode && canSelectBest && (
+              {canSelectBest && (
                 <button
                   className={cn(
                     "btn-ghost px-2 py-1 text-xs",
