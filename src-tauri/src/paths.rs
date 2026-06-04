@@ -10,13 +10,16 @@ const APP_DIR_NAME: &str = "timbre";
 
 pub fn data_dir() -> PathBuf {
     let base = if cfg!(target_os = "macos") {
+        // ~/Library/Application Support/timbre
         dirs::home_dir()
             .expect("home dir")
             .join("Library")
             .join("Application Support")
     } else if cfg!(target_os = "windows") {
+        // %APPDATA%\timbre
         dirs::config_dir().expect("config dir")
     } else {
+        // Linux: $XDG_DATA_HOME/timbre, else ~/.local/share/timbre.
         dirs::data_dir().expect("data dir")
     };
     let p = base.join(APP_DIR_NAME);

@@ -16,6 +16,7 @@
     "tauri:build": "tauri build",
     "release:validate": "node scripts/validate-release-inputs.mjs",
     "release:checksums": "node scripts/write-artifact-checksums.mjs",
+    "release:portable:windows": "powershell -ExecutionPolicy Bypass -File scripts/package-windows-portable.ps1",
     "build:icons": "node scripts/build-icons.mjs",
     "setup:windows": "powershell -ExecutionPolicy Bypass -File scripts/setup-windows.ps1"
   },

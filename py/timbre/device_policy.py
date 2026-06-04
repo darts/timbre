@@ -47,6 +47,12 @@ def accelerator_retry_reason(
             "unsupported device type mps",
         )
     elif requested_device == "cuda":
+        # ROCm/HIP wheels expose themselves as `torch.cuda.*`, so the same
+        # `device == "cuda"` path covers both. Most HIP error strings either
+        # mirror these CUDA terms verbatim or land in "out of memory" /
+        # "device-side assert", so we don't need a separate ROCm branch. The
+        # HIP-specific tokens below are intentionally specific — a bare "hip"
+        # substring would spuriously match "ship", "chip", "championship", etc.
         terms = (
             "cuda",
             "cublas",
@@ -58,6 +64,13 @@ def accelerator_retry_reason(
             "not implemented for 'cuda'",
             "not implemented for cuda",
             "unsupported device type cuda",
+            "hiperror",
+            "hipblas",
+            "hipfft",
+            "hiprt",
+            "hsa_status",
+            "rocblas",
+            "miopen",
         )
     else:
         return None
@@ -84,6 +97,14 @@ def log_cpu_handoff(
 
 def device_label(device: str) -> str:
     if device == "cuda":
+        # ROCm wheels run under the `torch.cuda` API surface but `torch.version.hip`
+        # is set — distinguish here so the UI says "ROCm" instead of "CUDA".
+        try:
+            import torch
+            if getattr(torch.version, "hip", None) is not None:
+                return "ROCm"
+        except Exception:  # noqa: BLE001
+            pass
         return "CUDA"
     if device == "mps":
         return "MPS"

@@ -17,7 +17,7 @@
       "sample_rate": 24000,
       "ref_clip": { "min_seconds": 3, "max_seconds": 15, "transcript_required": false },
       "languages": ["auto", "english", "german", "chinese", "french", "italian", "japanese", "korean", "portuguese", "russian", "spanish"],
-      "hardware": ["cpu", "cuda", "mps"],
+      "hardware": ["cpu", "cuda", "mps", "rocm"],
       "hardware_notes": { "mps": "Runs on MPS in fp32 with eager attention (SDPA's GQA kernel is unimplemented on MPS)." },
       "is_default": true,
       "params": [],
@@ -63,7 +63,7 @@
       "sample_rate": 24000,
       "ref_clip": { "min_seconds": 3, "max_seconds": 15, "transcript_required": false },
       "languages": ["auto", "chinese", "english", "french", "german", "italian", "japanese", "korean", "portuguese", "russian", "spanish"],
-      "hardware": ["cpu", "cuda", "mps"],
+      "hardware": ["cpu", "cuda", "mps", "rocm"],
       "hardware_notes": { "mps": "Runs on MPS in fp32 with eager attention (SDPA's GQA kernel is unimplemented on MPS)." },
       "params": [],
       "getting_started": {
@@ -110,7 +110,7 @@
       "ref_clip": { "min_seconds": 5, "max_seconds": 15, "transcript_required": false },
       "chunking": { "target_chars": 160, "max_chars": 220 },
       "languages": ["english"],
-      "hardware": ["cpu", "cuda", "mps"],
+      "hardware": ["cpu", "cuda", "mps", "rocm"],
       "hardware_notes": { "cpu": "Usable for QA, but intended for GPU/MPS acceleration." },
       "params": [],
       "getting_started": {
@@ -179,7 +179,7 @@
       "ref_clip": { "min_seconds": 5, "max_seconds": 15, "transcript_required": false },
       "chunking": { "target_chars": 120, "max_chars": 180 },
       "languages": ["english"],
-      "hardware": ["cpu", "cuda", "mps"],
+      "hardware": ["cpu", "cuda", "mps", "rocm"],
       "hardware_notes": { "cpu": "Usable for QA, but intended for GPU/MPS acceleration." },
       "params": [
         {

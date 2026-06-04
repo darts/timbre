@@ -5,6 +5,7 @@ voice_id+model_id rather than blobs in the DB."""
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import time
 import uuid
@@ -462,23 +463,139 @@ def update_synthesis_result(
     final_audio_path: str,
     duration_ms: int,
     status: str = "ready",
-) -> None:
+) -> bool:
     now = int(time.time() * 1000)
     with _conn() as c:
-        c.execute(
+        cur = c.execute(
             "UPDATE synthesis SET final_audio_path=?, duration_ms=?, status=?, updated_at=? "
-            "WHERE id=?",
+            "WHERE id=? AND status != 'cancelled'",
             (final_audio_path, duration_ms, status, now, synthesis_id),
         )
+        return cur.rowcount > 0
 
 
-def update_synthesis_status(synthesis_id: str, status: str) -> None:
+def update_synthesis_status(synthesis_id: str, status: str) -> bool:
     now = int(time.time() * 1000)
     with _conn() as c:
+        if status == "cancelled":
+            cur = c.execute(
+                "UPDATE synthesis SET status=?, updated_at=? WHERE id=?",
+                (status, now, synthesis_id),
+            )
+        else:
+            cur = c.execute(
+                "UPDATE synthesis SET status=?, updated_at=? "
+                "WHERE id=? AND status != 'cancelled'",
+                (status, now, synthesis_id),
+            )
+        return cur.rowcount > 0
+
+
+def cancel_synthesis(synthesis_id: str) -> dict[str, Any]:
+    now = int(time.time() * 1000)
+    with _conn() as c:
+        row = c.execute(
+            "SELECT status FROM synthesis WHERE id=?",
+            (synthesis_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"synthesis not found: {synthesis_id}")
+        if row["status"] in ("ready", "failed", "cancelled"):
+            pass
+        else:
+            c.execute(
+                """
+                UPDATE synthesis
+                SET final_audio_path=NULL,
+                    duration_ms=NULL,
+                    status='cancelled',
+                    updated_at=?
+                WHERE id=?
+                """,
+                (now, synthesis_id),
+            )
+            c.execute(
+                """
+                UPDATE chunk
+                SET status='cancelled'
+                WHERE synthesis_id=?
+                  AND status IN ('pending', 'running')
+                """,
+                (synthesis_id,),
+            )
+    return get_synthesis(synthesis_id)
+
+
+def cancel_interrupted_syntheses() -> list[str]:
+    now = int(time.time() * 1000)
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id FROM synthesis WHERE status IN ('pending', 'running')",
+        ).fetchall()
+        synthesis_ids = [row["id"] for row in rows]
+        if not synthesis_ids:
+            return []
         c.execute(
-            "UPDATE synthesis SET status=?, updated_at=? WHERE id=?",
-            (status, now, synthesis_id),
+            """
+            UPDATE chunk
+            SET status='cancelled'
+            WHERE status IN ('pending', 'running')
+              AND synthesis_id IN (
+                SELECT id FROM synthesis WHERE status IN ('pending', 'running')
+              )
+            """,
         )
+        c.execute(
+            """
+            UPDATE synthesis
+            SET final_audio_path=NULL,
+                duration_ms=NULL,
+                status='cancelled',
+                updated_at=?
+            WHERE status IN ('pending', 'running')
+            """,
+            (now,),
+        )
+        return synthesis_ids
+
+
+def delete_syntheses(synthesis_ids: list[str]) -> list[str]:
+    ids = list(dict.fromkeys(sid for sid in synthesis_ids if sid))
+    if not ids:
+        return []
+    clip_dirs = [_synthesis_clip_dir(sid) for sid in ids]
+
+    placeholders = ",".join("?" for _ in ids)
+    with _conn() as c:
+        rows = c.execute(
+            f"SELECT id, status FROM synthesis WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        found = {row["id"]: row["status"] for row in rows}
+        missing = [sid for sid in ids if sid not in found]
+        if missing:
+            raise KeyError(f"synthesis not found: {missing[0]}")
+        active = [sid for sid in ids if found[sid] in ("pending", "running")]
+        if active:
+            raise RuntimeError(f"cannot delete active synthesis: {active[0]}")
+        c.execute(
+            f"DELETE FROM synthesis WHERE id IN ({placeholders})",
+            ids,
+        )
+
+    for target in clip_dirs:
+        shutil.rmtree(target, ignore_errors=True)
+    return ids
+
+
+def _synthesis_clip_dir(synthesis_id: str) -> Path:
+    from timbre.paths import clips_dir
+
+    root = clips_dir().resolve()
+    target = (root / synthesis_id).resolve()
+    if target == root or root not in target.parents:
+        raise RuntimeError(f"refusing to remove path outside clips directory: {target}")
+    return target
 
 
 def set_synthesis_favorite(synthesis_id: str) -> None:
@@ -560,10 +677,10 @@ def update_chunk_result(
     text: str | None = None,
     seed: int | None = None,
     params_override: dict[str, Any] | None = None,
-) -> None:
+) -> bool:
     params_json = json.dumps(params_override) if params_override is not None else None
     with _conn() as c:
-        c.execute(
+        cur = c.execute(
             """
             UPDATE chunk
             SET audio_path=?,
@@ -573,7 +690,7 @@ def update_chunk_result(
                 seed=COALESCE(?, seed),
                 params_override_json=COALESCE(?, params_override_json),
                 revision=revision+1
-            WHERE id=?
+            WHERE id=? AND status != 'cancelled'
             """,
             (
                 audio_path,
@@ -585,6 +702,7 @@ def update_chunk_result(
                 chunk_id,
             ),
         )
+        return cur.rowcount > 0
 
 
 def list_chunks(synthesis_id: str) -> list[dict[str, Any]]:

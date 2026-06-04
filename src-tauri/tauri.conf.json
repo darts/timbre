@@ -44,7 +44,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg", "msi", "nsis"],
+    "targets": ["app", "dmg", "msi", "nsis", "deb", "appimage", "rpm"],
     "resources": {
       "../py/pyproject.toml": "py/pyproject.toml",
       "../py/timbre/*.py": "py/timbre/",
@@ -61,11 +61,20 @@
     ],
     "macOS": {
       "minimumSystemVersion": "11.0",
-      "entitlements": "entitlements.plist"
+      "entitlements": "entitlements.plist",
+      "signingIdentity": "-"
     },
     "windows": {
       "wix": { "language": "en-US" },
       "nsis": { "displayLanguageSelector": false }
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libsoup-3.0-0", "libssl3", "libgtk-3-0"]
+      },
+      "rpm": {
+        "depends": ["webkit2gtk4.1", "libsoup3", "openssl", "gtk3"]
+      }
     }
   }
 }

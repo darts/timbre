@@ -7,7 +7,7 @@ on:
       - "qa-*"
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -25,6 +25,10 @@ jobs:
             os: windows-2025
             bundles: msi,nsis
             artifact_name: timbre-windows-x86_64
+          - platform: linux-x86_64
+            os: ubuntu-22.04
+            bundles: deb,appimage,rpm
+            artifact_name: timbre-linux-x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +49,21 @@ jobs:
           workspaces: src-tauri -> target
           shared-key: tauri-${{ matrix.platform }}
 
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev \
+            patchelf \
+            libfuse2 \
+            rpm
+
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
@@ -61,6 +80,10 @@ jobs:
       - name: Build unsigned Tauri bundles
         run: pnpm tauri:build --bundles ${{ matrix.bundles }}
 
+      - name: Package Windows portable ZIP
+        if: runner.os == 'Windows'
+        run: pnpm release:portable:windows
+
       - name: Write artifact checksums
         run: pnpm release:checksums ${{ matrix.platform }}
 
@@ -73,5 +96,9 @@ jobs:
             src-tauri/target/release/bundle/**/*.app
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.zip
             src-tauri/target/release/bundle/**/*SHA256SUMS.txt
           if-no-files-found: error

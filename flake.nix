@@ -9,7 +9,13 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfreePredicate = pkg:
+            builtins.elem (nixpkgs.lib.getName pkg) [
+              "timbre"
+            ];
+        };
         inherit (pkgs) lib stdenv;
 
         # Core toolchains — match what's actually used by the project:
@@ -73,6 +79,15 @@
             echo "  pnpm   $(pnpm --version)"
             echo "  python $(python3 --version | awk '{print $2}')"
           '';
+        };
+
+        # Nix-buildable Timbre binary. Linux x86_64 only: the FirstRun runtime
+        # download manifest currently ships Linux Python/uv assets for x86_64.
+        # Tauri's macOS bundling relies on Apple tooling that nixpkgs doesn't
+        # currently package well, and Windows Nix builds aren't a target.
+        packages = lib.optionalAttrs (system == "x86_64-linux") rec {
+          timbre = pkgs.callPackage ./nix/timbre.nix {};
+          default = timbre;
         };
 
         # `nix fmt` runs nixpkgs-fmt over the flake itself.

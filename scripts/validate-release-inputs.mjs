@@ -4,9 +4,24 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-const requiredPlatforms = ["macos-arm64", "windows-x86_64"];
-const requiredBundleTargets = ["app", "dmg", "msi", "nsis"];
-const requiredBackendRequirements = ["base", "cpu", "cuda", "mps"];
+const requiredPlatforms = ["macos-arm64", "windows-x86_64", "linux-x86_64"];
+const requiredBundleTargets = ["app", "dmg", "msi", "nsis", "deb", "appimage", "rpm"];
+const requiredBackendRequirements = [
+  "base",
+  "cpu",
+  "cuda",
+  "mps",
+  "rocm-linux",
+  "rocm-windows",
+  "rocm-windows-sdk",
+];
+const staleRocmMarkers = [
+  "rocm6.4",
+  "rocm-rel-6.4.4",
+  "torch-2.8.0a0",
+  "torchaudio-2.6.0a0",
+];
+const torchBackendRequirements = ["cpu", "cuda", "mps"];
 
 const failures = [];
 
@@ -103,12 +118,26 @@ function validateDownloadManifest() {
   assert(manifest.torch_index_urls?.cpu?.startsWith("https://"), "cpu torch index URL missing");
   assert(manifest.torch_index_urls?.cuda?.startsWith("https://"), "cuda torch index URL missing");
   assert(manifest.torch_index_urls?.mps === null, "mps torch index URL should stay null");
+  assert(manifest.torch_index_urls?.cuda?.endsWith("/cu128"), "cuda torch index URL must stay on cu128");
+  assert(!manifest.torch_index_urls?.cuda?.includes("cu130"), "cuda torch index URL must not use cu130");
+  assert(manifest.torch_index_urls?.rocm_linux?.startsWith("https://"), "rocm_linux torch index URL missing");
+  assert(manifest.torch_index_urls?.rocm_windows?.startsWith("https://"), "rocm_windows torch index URL missing");
+  assert(
+    manifest.torch_index_urls?.rocm_linux?.includes("rocm-rel-7.2.1"),
+    "rocm_linux URL must point at ROCm 7.2.1",
+  );
+  assert(
+    manifest.torch_index_urls?.rocm_windows?.includes("rocm-rel-7.2.1"),
+    "rocm_windows URL must point at ROCm 7.2.1",
+  );
 }
 
 function validateRequirementsAndModels() {
   for (const name of requiredBackendRequirements) {
     assert(existsSync(path.join(root, "py", "requirements", `${name}.txt`)), `requirements file missing: ${name}.txt`);
   }
+  validateRocmRequirements();
+  validateTorchBackendRequirements();
 
   const models = readJson("resources/models.manifest.json").models ?? [];
   assert(models.length > 0, "models manifest contains no models");
@@ -118,6 +147,28 @@ function validateRequirementsAndModels() {
       existsSync(path.join(root, "py", "requirements", `${adapter}.txt`)),
       `adapter requirements file missing: ${adapter}.txt`,
     );
+  }
+}
+
+function validateTorchBackendRequirements() {
+  for (const name of torchBackendRequirements) {
+    const relative = `py/requirements/${name}.txt`;
+    const text = readFileSync(path.join(root, relative), "utf8");
+    assert(text.includes("torch==2.9.1"), `${relative} must pin torch==2.9.1`);
+    assert(text.includes("torchaudio==2.9.1"), `${relative} must pin torchaudio==2.9.1`);
+    assert(!text.includes("torch==2.8.0"), `${relative} contains stale torch==2.8.0`);
+    assert(!text.includes("torchaudio==2.8.0"), `${relative} contains stale torchaudio==2.8.0`);
+  }
+}
+
+function validateRocmRequirements() {
+  for (const name of ["rocm-linux", "rocm-windows", "rocm-windows-sdk"]) {
+    const relative = `py/requirements/${name}.txt`;
+    const text = readFileSync(path.join(root, relative), "utf8");
+    assert(text.includes("rocm-rel-7.2.1"), `${relative} must use ROCm 7.2.1 URLs`);
+    for (const marker of staleRocmMarkers) {
+      assert(!text.includes(marker), `${relative} contains stale ROCm marker: ${marker}`);
+    }
   }
 }
 

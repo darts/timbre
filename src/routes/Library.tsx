@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
-import { Download, Loader2, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { Download, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { tauri } from "@/lib/ipc";
 import { useSynthRunningStatus, useVoices } from "@/lib/queries";
 import { Voice } from "@/lib/schema";
@@ -33,26 +33,6 @@ export function Library() {
     },
   });
 
-  const importPrompts = useMutation({
-    mutationFn: async () => {
-      const ok = window.confirm(
-        "Import only trusted Timbre voice archives. Prompt archives contain model prompt payloads but no source recording or transcript.",
-      );
-      if (!ok) return null;
-      const file = await openFileDialog({
-        multiple: false,
-        filters: [{ name: "Timbre voice", extensions: ["timbrevoice"] }],
-      });
-      if (!file) return null;
-      const archivePath = typeof file === "string" ? file : (file as { path: string }).path;
-      return tauri.rpc<Voice>("voices.import_prompts", { archive_path: archivePath });
-    },
-    onSuccess: (voice) => {
-      if (!voice) return;
-      refreshVoices();
-    },
-  });
-
   const exportPrompts = useMutation({
     mutationFn: async (voice: Voice) => {
       if ((voice.prompt_count ?? 0) <= 0) {
@@ -74,36 +54,23 @@ export function Library() {
     <div className="p-8 max-w-3xl mx-auto">
       <header className="flex items-end justify-between mb-6">
         <h1 className="text-xl font-semibold tracking-tight">Voices</h1>
-        <div className="flex items-center gap-2">
-          <button
-            className="btn-ghost"
-            onClick={() => importPrompts.mutate()}
-            disabled={importPrompts.isPending}
-            title="Import a prompt-only voice archive"
-          >
-            {importPrompts.isPending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Upload className="w-4 h-4" />
-            )}
-            Import
-          </button>
-          <button
-            className="btn-primary"
-            onClick={() => {
-              setEditingVoice(null);
-              setDialogOpen(true);
-            }}
-          >
-            <Plus className="w-4 h-4" /> Add voice
-          </button>
-        </div>
+        <button
+          className="btn-primary"
+          onClick={() => {
+            setEditingVoice(null);
+            setDialogOpen(true);
+          }}
+        >
+          <Plus className="w-4 h-4" /> Add voice
+        </button>
       </header>
 
       <div className="space-y-2">
         {voices?.length === 0 && (
           <div className="text-sm text-zinc-500">
-            No voices yet. Add a 5–15s reference clip — clean, single-speaker audio works best.
+            No voices yet. Click <span className="font-medium text-zinc-300">Add voice</span>{" "}
+            to record a clip, load an audio file, or import a{" "}
+            <code className="text-zinc-300">.timbrevoice</code> archive.
           </div>
         )}
         {voices?.map((v) => {
@@ -195,9 +162,9 @@ export function Library() {
         })}
       </div>
 
-      {(importPrompts.error || exportPrompts.error) && (
+      {exportPrompts.error && (
         <div className="mt-3 text-xs text-red-400">
-          {((importPrompts.error || exportPrompts.error) as Error).message}
+          {(exportPrompts.error as Error).message}
         </div>
       )}
 

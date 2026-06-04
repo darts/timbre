@@ -1,12 +1,16 @@
 //! First-run backend installer.
 //!
-//! Steps for a chosen `Backend` (cpu / cuda / mps):
-//!   1. Detect platform (macos-arm64, macos-x86_64, windows-x86_64).
+//! Steps for a chosen `Backend` (cpu / cuda / mps / rocm):
+//!   1. Detect platform (macos-arm64, macos-x86_64, windows-x86_64, linux-x86_64).
 //!   2. Download python-build-standalone tarball -> extract to <data>/python.
 //!   3. Download uv -> place in <data>/bin/uv.
 //!   4. uv venv <data>/venv --python <data>/python/python3
 //!   5. uv pip install -r requirements/{backend}.txt --index-url <pytorch index>
 //!   6. uv pip install -r requirements/base.txt
+//!
+//! ROCm is Linux- or Windows-only; on macOS the install() guard rejects it
+//! since PyTorch ships no macOS ROCm wheels. The ROCm requirements file
+//! branches on the host OS at compile time.
 //!
 //! Progress is reported via a `BackendProgress` channel that the IPC layer
 //! converts into Tauri events.
@@ -32,6 +36,7 @@ pub enum Backend {
     Cpu,
     Cuda,
     Mps,
+    Rocm,
 }
 
 impl Backend {
@@ -40,16 +45,32 @@ impl Backend {
             Backend::Cpu => "cpu.txt",
             Backend::Cuda => "cuda.txt",
             Backend::Mps => "mps.txt",
+            // ROCm wheels diverge by host OS, so the requirements file is
+            // platform-specific.
+            Backend::Rocm => {
+                if cfg!(target_os = "windows") {
+                    "rocm-windows.txt"
+                } else {
+                    "rocm-linux.txt"
+                }
+            }
         }
     }
 
-    /// PyTorch wheel index URL. `None` means use the default PyPI index
-    /// (used for MPS — Apple-silicon torch wheels are on the default index).
+    /// PyTorch wheel index URL. `None` means no `--index-url` flag is passed
+    /// to `uv pip install`; uv falls back to the default PyPI index for any
+    /// transitive deps the requirements file declares.
+    ///
+    /// Notable Nones:
+    /// - `Mps`: macOS arm64 torch wheels are on the default PyPI index already.
+    /// - `Rocm`: AMD publishes the validated Radeon/Ryzen wheels as literal
+    ///   URLs under repo.radeon.com for both Linux and Windows.
     pub fn torch_index_url(self) -> Option<&'static str> {
         match self {
             Backend::Cpu => Some("https://download.pytorch.org/whl/cpu"),
-            Backend::Cuda => Some("https://download.pytorch.org/whl/cu124"),
+            Backend::Cuda => Some("https://download.pytorch.org/whl/cu128"),
             Backend::Mps => None,
+            Backend::Rocm => None,
         }
     }
 }
@@ -60,13 +81,36 @@ pub struct BackendStatus {
     pub backend: Option<Backend>,
     pub python_path: Option<PathBuf>,
     pub venv_path: Option<PathBuf>,
+    pub pack_version: Option<String>,
+    pub stale: bool,
 }
 
 const STATE_FILE: &str = "backend.state.json";
+const CPU_PACK_VERSION: &str = "cpu-torch-2.9.1";
+const CUDA_PACK_VERSION: &str = "cuda-cu128-torch-2.9.1";
+const MPS_PACK_VERSION: &str = "mps-torch-2.9.1";
+const ROCM_PACK_VERSION: &str = "rocm-7.2.1-pytorch-2.9.1";
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 struct State {
     backend: Option<Backend>,
+    pack_version: Option<String>,
+}
+
+fn pack_version(backend: Backend) -> Option<&'static str> {
+    match backend {
+        Backend::Cpu => Some(CPU_PACK_VERSION),
+        Backend::Cuda => Some(CUDA_PACK_VERSION),
+        Backend::Mps => Some(MPS_PACK_VERSION),
+        Backend::Rocm => Some(ROCM_PACK_VERSION),
+    }
+}
+
+fn is_stale_pack(backend: Backend, installed_version: Option<&str>) -> bool {
+    match pack_version(backend) {
+        Some(current) => installed_version != Some(current),
+        None => false,
+    }
 }
 
 pub struct BackendManager {
@@ -85,118 +129,35 @@ impl BackendManager {
     pub fn status(&self) -> BackendStatus {
         let state = read_state().unwrap_or_default();
         let py = paths::venv_python();
-        let installed = py.exists() && state.backend.is_some();
+        let stale = state
+            .backend
+            .is_some_and(|backend| is_stale_pack(backend, state.pack_version.as_deref()));
+        let installed = py.exists() && state.backend.is_some() && !stale;
         BackendStatus {
             installed,
             backend: state.backend,
             python_path: installed.then(|| py),
             venv_path: installed.then(|| paths::venv_dir()),
+            pack_version: state.pack_version,
+            stale,
         }
     }
 
     pub async fn install(self: Arc<Self>, app: AppHandle, backend: Backend) -> Result<()> {
         let _g = self.install_lock.lock().await;
-        emit_progress(&app, "starting", 0.0, format!("installing {:?}", backend));
-
-        let urls = load_urls(&app)?;
-        let plat = current_platform()?;
-        let plat_urls = urls
-            .get("platforms")
-            .and_then(|v| v.get(plat))
-            .ok_or_else(|| anyhow!("no urls for platform {plat}"))?;
-        let py_entry = plat_urls
-            .get("python")
-            .ok_or_else(|| anyhow!("missing python manifest entry"))?;
-        let py_url = py_entry
-            .get("url")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("missing python url"))?;
-        let py_sha256 = py_entry
-            .get("sha256")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty());
-        let uv_entry = plat_urls
-            .get("uv")
-            .ok_or_else(|| anyhow!("missing uv manifest entry"))?;
-        let uv_url = uv_entry
-            .get("url")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("missing uv url"))?;
-        let uv_sha256 = uv_entry
-            .get("sha256")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty());
-
-        // 1. Python interpreter
-        emit_progress(&app, "download_python", 0.05, "downloading Python".into());
-        let py_dl = paths::data_dir().join("downloads").join("python.tar.gz");
-        download_file(
-            &app,
-            py_url,
-            py_sha256,
-            &py_dl,
-            "download_python",
-            0.05,
-            0.30,
-        )
-        .await?;
-        emit_progress(&app, "extract_python", 0.30, "extracting Python".into());
-        extract_archive(&py_dl, &paths::python_dir())?;
-
-        // 2. uv. Astral wraps the binary in a `uv-{triple}/` directory inside
-        //    the archive, so we extract to a scratch dir and then locate the
-        //    binary so it ends up at `data_dir/bin/uv` regardless.
-        emit_progress(&app, "download_uv", 0.40, "downloading uv".into());
-        let uv_dl_name = if uv_url.ends_with(".zip") {
-            "uv.zip"
-        } else {
-            "uv.tar.gz"
-        };
-        let uv_dl = paths::data_dir().join("downloads").join(uv_dl_name);
-        download_file(&app, uv_url, uv_sha256, &uv_dl, "download_uv", 0.40, 0.50).await?;
-        emit_progress(&app, "extract_uv", 0.50, "extracting uv".into());
-        let uv_extract = paths::data_dir().join("downloads").join("uv-extract");
-        if uv_extract.exists() {
-            fs::remove_dir_all(&uv_extract).ok();
+        if backend == Backend::Rocm && cfg!(target_os = "macos") {
+            bail!("ROCm backend is not supported on macOS — pick MPS or CPU");
         }
-        extract_archive(&uv_dl, &uv_extract)?;
-        install_uv_from(&uv_extract)?;
-        ensure_executable(&paths::uv_path())?;
-
-        // 3. venv + dep install
-        emit_progress(&app, "create_venv", 0.55, "creating venv".into());
-        let py_exe = paths::python_executable();
-        if !py_exe.exists() {
-            bail!("expected python at {} after extract", py_exe.display());
+        let result = install_locked(&app, backend).await;
+        if result.is_err() {
+            rollback_failed_install();
         }
-        run_uv(&[
-            "venv",
-            paths::venv_dir().to_string_lossy().as_ref(),
-            "--python",
-            py_exe.to_string_lossy().as_ref(),
-        ])
-        .await?;
-
-        emit_progress(&app, "install_torch", 0.65, "installing torch".into());
-        install_torch(&app, backend).await?;
-
-        emit_progress(&app, "install_base", 0.85, "installing common deps".into());
-        install_base(&app).await?;
-
-        write_state(&State {
-            backend: Some(backend),
-        })?;
-        emit_progress(&app, "done", 1.0, "backend ready".into());
-        Ok(())
+        result
     }
 
     pub async fn uninstall(self: Arc<Self>) -> Result<()> {
         let _g = self.install_lock.lock().await;
-        let venv = paths::venv_dir();
-        if venv.exists() {
-            fs::remove_dir_all(&venv).ok();
-            fs::create_dir_all(&venv).ok();
-        }
+        clear_venv()?;
         write_state(&State::default())?;
         Ok(())
     }
@@ -225,7 +186,12 @@ impl BackendManager {
 
         let venv_python = paths::venv_python();
         if adapter == "chatterbox" {
-            emit_model_deps(&app, &model_id, "installing", "installing chatterbox package");
+            emit_model_deps(
+                &app,
+                &model_id,
+                "installing",
+                "installing chatterbox package",
+            );
             run_uv(&[
                 "pip",
                 "install",
@@ -255,6 +221,135 @@ impl BackendManager {
     }
 }
 
+async fn install_locked(app: &AppHandle, backend: Backend) -> Result<()> {
+    emit_progress(app, "starting", 0.0, format!("installing {:?}", backend));
+    write_state(&State::default()).context("reset backend state before install")?;
+    clear_venv().context("clear existing backend venv before install")?;
+
+    let urls = load_urls(app)?;
+    let plat = current_platform()?;
+    let plat_urls = urls
+        .get("platforms")
+        .and_then(|v| v.get(plat))
+        .ok_or_else(|| anyhow!("no urls for platform {plat}"))?;
+    let py_entry = plat_urls
+        .get("python")
+        .ok_or_else(|| anyhow!("missing python manifest entry"))?;
+    let py_url = py_entry
+        .get("url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("missing python url"))?;
+    let py_sha256 = py_entry
+        .get("sha256")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let uv_entry = plat_urls
+        .get("uv")
+        .ok_or_else(|| anyhow!("missing uv manifest entry"))?;
+    let uv_url = uv_entry
+        .get("url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("missing uv url"))?;
+    let uv_sha256 = uv_entry
+        .get("sha256")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+
+    // 1. Python interpreter
+    emit_progress(app, "download_python", 0.05, "downloading Python".into());
+    let py_dl = paths::data_dir().join("downloads").join("python.tar.gz");
+    download_file(
+        app,
+        py_url,
+        py_sha256,
+        &py_dl,
+        "download_python",
+        0.05,
+        0.30,
+    )
+    .await?;
+    emit_progress(app, "extract_python", 0.30, "extracting Python".into());
+    extract_archive(&py_dl, &paths::python_dir())?;
+
+    // 2. uv. Astral wraps the binary in a `uv-{triple}/` directory inside
+    //    the archive, so we extract to a scratch dir and then locate the
+    //    binary so it ends up at `data_dir/bin/uv` regardless.
+    emit_progress(app, "download_uv", 0.40, "downloading uv".into());
+    let uv_dl_name = if uv_url.ends_with(".zip") {
+        "uv.zip"
+    } else {
+        "uv.tar.gz"
+    };
+    let uv_dl = paths::data_dir().join("downloads").join(uv_dl_name);
+    download_file(app, uv_url, uv_sha256, &uv_dl, "download_uv", 0.40, 0.50).await?;
+    emit_progress(app, "extract_uv", 0.50, "extracting uv".into());
+    let uv_extract = paths::data_dir().join("downloads").join("uv-extract");
+    if uv_extract.exists() {
+        fs::remove_dir_all(&uv_extract).ok();
+    }
+    extract_archive(&uv_dl, &uv_extract)?;
+    install_uv_from(&uv_extract)?;
+    ensure_executable(&paths::uv_path())?;
+
+    // 3. venv + dep install
+    emit_progress(app, "create_venv", 0.55, "creating venv".into());
+    let py_exe = paths::python_executable();
+    if !py_exe.exists() {
+        bail!("expected python at {} after extract", py_exe.display());
+    }
+    run_uv(&[
+        "venv",
+        paths::venv_dir().to_string_lossy().as_ref(),
+        "--python",
+        py_exe.to_string_lossy().as_ref(),
+        "--clear",
+    ])
+    .await?;
+
+    emit_progress(app, "install_torch", 0.65, "installing torch".into());
+    install_torch(app, backend).await?;
+
+    emit_progress(app, "install_base", 0.85, "installing common deps".into());
+    install_base(app).await?;
+
+    write_state(&State {
+        backend: Some(backend),
+        pack_version: pack_version(backend).map(str::to_owned),
+    })?;
+    emit_progress(app, "done", 1.0, "backend ready".into());
+    Ok(())
+}
+
+fn rollback_failed_install() {
+    if let Err(e) = clear_venv() {
+        tracing::warn!("failed to remove partial backend venv after install error: {e:#}");
+    }
+    if let Err(e) = write_state(&State::default()) {
+        tracing::warn!("failed to reset backend state after install error: {e:#}");
+    }
+}
+
+fn clear_venv() -> Result<()> {
+    clear_venv_dir(&paths::data_dir().join("venv"))
+}
+
+fn clear_venv_dir(venv: &Path) -> Result<()> {
+    let meta = match fs::symlink_metadata(venv) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(e).with_context(|| format!("inspect backend venv {}", venv.display()))
+        }
+    };
+    if meta.is_dir() {
+        fs::remove_dir_all(venv)
+            .with_context(|| format!("remove backend venv {}", venv.display()))?;
+    } else {
+        fs::remove_file(venv).with_context(|| format!("remove backend venv {}", venv.display()))?;
+    }
+    Ok(())
+}
+
 fn emit_model_deps(app: &AppHandle, model_id: &str, stage: &str, message: &str) {
     let _ = app.emit(
         "model:deps_progress",
@@ -278,6 +373,7 @@ fn current_platform() -> Result<&'static str> {
         ("macos", "aarch64") => "macos-arm64",
         ("macos", "x86_64") => "macos-x86_64",
         ("windows", "x86_64") => "windows-x86_64",
+        ("linux", "x86_64") => "linux-x86_64",
         (os, arch) => bail!("unsupported platform: {os}/{arch}"),
     })
 }
@@ -443,7 +539,20 @@ async fn run_uv(args: &[&str]) -> Result<()> {
 }
 
 async fn install_torch(app: &AppHandle, backend: Backend) -> Result<()> {
-    let req = req_path(app, backend.requirements_filename())?;
+    if backend == Backend::Rocm && cfg!(target_os = "windows") {
+        install_requirement_file(app, "rocm-windows-sdk.txt", None)
+            .await
+            .context("install ROCm Windows SDK packages")?;
+    }
+    install_requirement_file(app, backend.requirements_filename(), backend.torch_index_url()).await
+}
+
+async fn install_requirement_file(
+    app: &AppHandle,
+    requirements_name: &str,
+    index_url: Option<&str>,
+) -> Result<()> {
+    let req = req_path(app, requirements_name)?;
     let venv_python = paths::venv_python();
     let mut args: Vec<String> = vec![
         "pip".into(),
@@ -453,7 +562,7 @@ async fn install_torch(app: &AppHandle, backend: Backend) -> Result<()> {
         "-r".into(),
         req.to_string_lossy().into(),
     ];
-    if let Some(idx) = backend.torch_index_url() {
+    if let Some(idx) = index_url {
         args.push("--index-url".into());
         args.push(idx.into());
     }
@@ -501,4 +610,58 @@ fn write_state(s: &State) -> Result<()> {
     fs::create_dir_all(p.parent().unwrap())?;
     fs::write(&p, serde_json::to_string_pretty(s)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        clear_venv_dir, is_stale_pack, Backend, CPU_PACK_VERSION, CUDA_PACK_VERSION,
+        MPS_PACK_VERSION, ROCM_PACK_VERSION,
+    };
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_path(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!("timbre-{name}-{unique}"))
+    }
+
+    #[test]
+    fn clear_venv_dir_removes_nested_directory() {
+        let root = temp_path("clear-venv");
+        let venv = root.join("venv");
+        fs::create_dir_all(venv.join("bin")).expect("create test venv");
+        fs::write(venv.join("bin").join("python3"), b"test").expect("write test file");
+
+        clear_venv_dir(&venv).expect("clear venv");
+
+        assert!(!venv.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clear_venv_dir_allows_missing_path() {
+        let venv = temp_path("missing-venv").join("venv");
+
+        clear_venv_dir(&venv).expect("missing venv is ok");
+
+        assert!(!venv.exists());
+    }
+
+    #[test]
+    fn all_backends_require_current_pack_version() {
+        assert!(is_stale_pack(Backend::Rocm, None));
+        assert!(is_stale_pack(Backend::Rocm, Some("rocm-6.4.4-pytorch-2.8")));
+        assert!(!is_stale_pack(Backend::Rocm, Some(ROCM_PACK_VERSION)));
+        assert!(is_stale_pack(Backend::Cpu, None));
+        assert!(is_stale_pack(Backend::Cuda, Some("cuda-cu128-torch-2.8.0")));
+        assert!(is_stale_pack(Backend::Mps, Some("mps-torch-2.8.0")));
+        assert!(!is_stale_pack(Backend::Cpu, Some(CPU_PACK_VERSION)));
+        assert!(!is_stale_pack(Backend::Cuda, Some(CUDA_PACK_VERSION)));
+        assert!(!is_stale_pack(Backend::Mps, Some(MPS_PACK_VERSION)));
+    }
 }
