@@ -26,6 +26,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::time::{timeout, Duration};
 
 use crate::paths;
 
@@ -123,6 +124,10 @@ impl Sidecar {
             // import. The Python sidecar also has explicit CPU retry policy
             // for selected accelerator failures.
             .env("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+            // hf_xet writes the `.incomplete` file in ~67 MB bursts, which
+            // makes our filesystem-polling progress bar jump in chunks.
+            // Plain HTTP grows it in ~10 MB / 400 ms steps — smooth.
+            .env("HF_HUB_DISABLE_XET", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -167,13 +172,96 @@ impl Sidecar {
     }
 
     pub async fn stop(&self) -> Result<()> {
-        // Try a graceful shutdown first; fall back to kill if unresponsive.
-        let _ = self.call("shutdown", json!({})).await;
+        const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+        const EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+        let _ = timeout(SHUTDOWN_TIMEOUT, self.call("shutdown", json!({}))).await;
         let mut g = self.inner.lock().await;
-        if let Some(mut h) = g.take() {
-            let _ = h.child.kill().await;
+        let Some(h) = g.take() else {
+            return Ok(());
+        };
+        let SidecarHandle {
+            mut child,
+            write_tx,
+            ..
+        } = h;
+        drop(write_tx);
+
+        match timeout(EXIT_TIMEOUT, child.wait()).await {
+            Ok(Ok(status)) => {
+                tracing::debug!("sidecar exited during stop: {status}");
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("waiting for sidecar during stop failed: {e}");
+                child
+                    .kill()
+                    .await
+                    .context("kill sidecar after wait failure")?;
+            }
+            Err(_) => {
+                tracing::warn!("sidecar did not exit after shutdown; killing it");
+                child.kill().await.context("kill unresponsive sidecar")?;
+            }
+        }
+        drop(g);
+
+        let mut p = self.pending.lock().await;
+        for (_, tx) in p.map.drain() {
+            let _ = tx.send(Err(RpcErrorPayload {
+                code: -32003,
+                message: "sidecar stopped".into(),
+                data: None,
+            }));
         }
         Ok(())
+    }
+
+    pub async fn restart_hard(self: Arc<Self>, app: AppHandle) -> Result<SidecarStatus> {
+        const EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+        let handle = {
+            let mut g = self.inner.lock().await;
+            g.take()
+        };
+
+        if let Some(h) = handle {
+            let SidecarHandle {
+                mut child,
+                write_tx,
+                ..
+            } = h;
+            drop(write_tx);
+
+            if let Err(e) = child.start_kill() {
+                tracing::warn!("killing sidecar during hard restart failed: {e}");
+            }
+            match timeout(EXIT_TIMEOUT, child.wait()).await {
+                Ok(Ok(status)) => {
+                    tracing::debug!("sidecar exited during hard restart: {status}");
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("waiting for sidecar during hard restart failed: {e}");
+                }
+                Err(_) => {
+                    tracing::warn!("sidecar did not exit promptly during hard restart");
+                    child
+                        .kill()
+                        .await
+                        .context("kill unresponsive sidecar during hard restart")?;
+                }
+            }
+
+            let mut p = self.pending.lock().await;
+            for (_, tx) in p.map.drain() {
+                let _ = tx.send(Err(RpcErrorPayload {
+                    code: -32004,
+                    message: "sidecar restarted".into(),
+                    data: None,
+                }));
+            }
+        }
+
+        self.start(app).await
     }
 
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, RpcErrorPayload> {

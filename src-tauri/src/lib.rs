@@ -5,6 +5,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
 
 mod backend_pack;
+mod gpu;
 mod ipc;
 mod paths;
 mod sidecar;
@@ -23,6 +24,7 @@ pub fn run() {
         .manage(backend.clone())
         .invoke_handler(tauri::generate_handler![
             ipc::backend::host_info,
+            ipc::backend::detect_backends,
             ipc::backend::backend_status,
             ipc::backend::install_backend_pack,
             ipc::backend::uninstall_backend_pack,
@@ -31,6 +33,7 @@ pub fn run() {
             ipc::files::export_audio,
             ipc::sidecar_cmd::start_sidecar,
             ipc::sidecar_cmd::stop_sidecar,
+            ipc::sidecar_cmd::restart_sidecar,
             ipc::sidecar_cmd::sidecar_status,
             ipc::sidecar_cmd::rpc_call,
         ])

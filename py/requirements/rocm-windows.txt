@@ -1,0 +1,11 @@
+# AMD ROCm-on-Windows PyTorch wheels (preview, rocm-rel-7.2.1, Python 3.12 only).
+# PyTorch's whl/rocm6.X and whl/nightly/rocm6.X indexes are Linux-only — AMD
+# distributes Windows wheels at literal URLs from its Radeon repo, so this file
+# lists them directly and Backend::torch_index_url() returns None on Windows.
+# Source: https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installrad/windows/install-pytorch.html
+# Requires AMD Software Adrenalin 26.2.2 installed first.
+#
+# The ROCm SDK wheels in rocm-windows-sdk.txt must be installed before these.
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchvision-0.24.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl

@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { SlidersHorizontal, Sparkles } from "lucide-react";
+import { AlertCircle, SlidersHorizontal, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { tauri } from "@/lib/ipc";
+import { displayDeviceLabel } from "@/lib/deviceLabels";
 import { useBackendStatus, useDeviceCapabilities } from "@/lib/queries";
 import { useUiSettings, type DevicePreference } from "@/lib/settings";
 
@@ -16,11 +17,17 @@ export function Settings() {
   const setDevicePreference = useUiSettings((s) => s.setDevicePreference);
   const qc = useQueryClient();
   const nav = useNavigate();
+  const acceleratorLabel = displayDeviceLabel("cuda", backend?.backend);
+  const acceleratorAvailabilityLabel = backend?.backend === "rocm" ? "rocm" : "cuda";
 
   const reset = useMutation({
     mutationFn: () => tauri.uninstallBackendPack(),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["backend-status"] });
+      void qc.invalidateQueries({ queryKey: ["sidecar-status"] });
+      void qc.invalidateQueries({ queryKey: ["device-caps"] });
+      void qc.invalidateQueries({ queryKey: ["model-statuses"] });
+      void qc.invalidateQueries({ queryKey: ["synth-history"] });
       nav("/first-run", { replace: true });
     },
   });
@@ -38,7 +45,7 @@ export function Settings() {
         {caps && (
           <div className="mt-2 text-xs text-zinc-500 space-y-0.5">
             <div>torch {caps.torch_version ?? "?"}</div>
-            <div>cuda available: {String(caps.cuda)}</div>
+            <div>{acceleratorAvailabilityLabel} available: {String(caps.cuda)}</div>
             <div>mps available: {String(caps.mps)}</div>
           </div>
         )}
@@ -51,6 +58,20 @@ export function Settings() {
             {reset.isPending ? "Resetting…" : "Switch backend / reinstall"}
           </button>
         </div>
+        {reset.error && (
+          <div
+            role="alert"
+            className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3 flex gap-3"
+          >
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-red-300">Backend reset failed</div>
+              <pre className="mt-1 text-xs text-red-200/90 whitespace-pre-wrap break-words font-mono">
+                {errorMessage(reset.error)}
+              </pre>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="card p-5">
@@ -97,7 +118,7 @@ export function Settings() {
         <label className="mb-5 block">
           <span className="block text-sm text-zinc-200">Compute mode</span>
           <span className="mt-1 block text-xs text-zinc-500">
-            Auto prefers CUDA, then MPS, then CPU. Accelerator runs can retry on CPU when
+            Auto prefers {acceleratorLabel}, then MPS, then CPU. Accelerator runs can retry on CPU when
             a recoverable device failure is detected.
           </span>
           <select
@@ -107,7 +128,7 @@ export function Settings() {
           >
             <option value="auto">Auto</option>
             <option value="cpu">CPU</option>
-            <option value="cuda" disabled={!caps?.cuda}>CUDA</option>
+            <option value="cuda" disabled={!caps?.cuda}>{acceleratorLabel}</option>
             <option value="mps" disabled={!caps?.mps}>MPS</option>
           </select>
         </label>
@@ -150,6 +171,13 @@ export function Settings() {
 function backendLabel(backend?: string | null): string {
   if (backend === "mps") return "MPS + CPU";
   if (backend === "cuda") return "CUDA + CPU";
+  if (backend === "rocm") return "ROCm + CPU";
   if (backend === "cpu") return "CPU";
   return "—";
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return String(error);
 }

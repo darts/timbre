@@ -30,10 +30,14 @@ def is_available() -> bool:
 
 def _resolve_device_and_compute() -> tuple[str, str]:
     """Pick the safest CTranslate2 backend for the host. CTranslate2 doesn't
-    yet support MPS, so Apple Silicon falls back to CPU int8 — fast enough
-    for short clips."""
+    support MPS or ROCm, so Apple Silicon and AMD/ROCm hosts fall back to CPU
+    int8 — fast enough for short reference clips."""
     try:
         import torch  # noqa: F401
+        # ROCm/HIP wheels expose `torch.cuda.is_available() == True` but the
+        # CTranslate2 runtime can't talk to HIP. Force CPU under HIP.
+        if getattr(torch.version, "hip", None) is not None:
+            return "cpu", "int8"
         if torch.cuda.is_available():
             return "cuda", "float16"
     except Exception:

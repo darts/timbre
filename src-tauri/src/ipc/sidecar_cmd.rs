@@ -24,6 +24,19 @@ pub async fn stop_sidecar(sidecar: State<'_, Arc<Sidecar>>) -> Result<(), String
 }
 
 #[tauri::command]
+pub async fn restart_sidecar(
+    app: AppHandle,
+    sidecar: State<'_, Arc<Sidecar>>,
+) -> Result<SidecarStatus, String> {
+    sidecar
+        .inner()
+        .clone()
+        .restart_hard(app)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn sidecar_status(sidecar: State<'_, Arc<Sidecar>>) -> Result<SidecarStatus, String> {
     Ok(sidecar.status().await)
 }
