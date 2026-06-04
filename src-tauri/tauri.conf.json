@@ -61,7 +61,8 @@
     ],
     "macOS": {
       "minimumSystemVersion": "11.0",
-      "entitlements": "entitlements.plist"
+      "entitlements": "entitlements.plist",
+      "signingIdentity": "-"
     },
     "windows": {
       "wix": { "language": "en-US" },

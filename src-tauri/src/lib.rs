@@ -33,6 +33,7 @@ pub fn run() {
             ipc::files::export_audio,
             ipc::sidecar_cmd::start_sidecar,
             ipc::sidecar_cmd::stop_sidecar,
+            ipc::sidecar_cmd::restart_sidecar,
             ipc::sidecar_cmd::sidecar_status,
             ipc::sidecar_cmd::rpc_call,
         ])

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Save,
   Star,
+  Square,
   Trash2,
 } from "lucide-react";
 import { tauri, type BackendKind } from "@/lib/ipc";
@@ -40,6 +41,7 @@ import { useUiSettings, type DevicePreference } from "@/lib/settings";
 import { Waveform } from "@/components/Waveform";
 import { VoiceCreateDialog } from "@/components/VoiceCreateDialog";
 import { ParamControls } from "@/components/ParamControls";
+import { Dialog } from "@/components/Dialog";
 import { cn, formatDateTime, formatDuration } from "@/lib/utils";
 
 const MIN_SYNTH_RUN_COUNT = 1;
@@ -100,6 +102,17 @@ interface SynthRunResult {
   synthesis_id: string;
   final_audio_path: string;
   duration_ms: number;
+}
+
+interface SynthCancelResult {
+  ok: boolean;
+  synthesis_id: string;
+  status?: string | null;
+}
+
+interface SynthDeleteResult {
+  ok: boolean;
+  deleted: string[];
 }
 
 export function Studio() {
@@ -165,11 +178,13 @@ export function Studio() {
   );
   const totalVoices = voices?.length ?? 0;
   const [running, setRunning] = useState(false);
+  const [cancelRequested, setCancelRequested] = useState(false);
   const [progress, setProgress] = useState<SynthProgress | null>(null);
   const [uiElapsedMs, setUiElapsedMs] = useState(0);
   const uiTimerStartedAtRef = useRef<number | null>(null);
   const activeSynthesisIdRef = useRef<string | null>(null);
   const activeBatchRemainingRef = useRef(0);
+  const cancelRequestedRef = useRef(false);
 
   useEffect(() => {
     if (!voiceId) return;
@@ -295,7 +310,7 @@ export function Studio() {
   const handleSynthProgress = useCallback((p: SynthProgress) => {
     activeSynthesisIdRef.current = p.synthesis_id;
     setProgress(p);
-    if (p.phase === "failed") {
+    if (p.phase === "failed" || p.phase === "cancelled") {
       activeBatchRemainingRef.current = 0;
       stopUiTimer();
       setRunning(false);
@@ -347,7 +362,7 @@ export function Studio() {
           synthesisId ? { synthesis_id: synthesisId } : {},
         );
         if (cancelled || !p) return;
-        if (!synthesisId && (p.phase === "complete" || p.phase === "failed")) {
+        if (!synthesisId && (p.phase === "complete" || p.phase === "failed" || p.phase === "cancelled")) {
           return;
         }
         handleSynthProgress(p);
@@ -496,6 +511,8 @@ export function Studio() {
       if (running) throw new Error("synthesis already in progress");
       const count = clampRunCount(runCount);
       const batchId = count > 1 ? createBatchId() : undefined;
+      cancelRequestedRef.current = false;
+      setCancelRequested(false);
       startUiTimer(0);
       activeSynthesisIdRef.current = null;
       activeBatchRemainingRef.current = count;
@@ -534,6 +551,9 @@ export function Studio() {
       const seed = seedNum !== undefined && Number.isFinite(seedNum) ? seedNum : undefined;
       const results: SynthRunResult[] = [];
       for (let index = 0; index < count; index += 1) {
+        if (cancelRequestedRef.current) {
+          throw new Error("synthesis cancelled");
+        }
         if (index > 0) {
           activeSynthesisIdRef.current = null;
           setProgress((prev) => ({
@@ -588,6 +608,18 @@ export function Studio() {
       qc.invalidateQueries({ queryKey: ["voice-prompts", activeModel] });
     },
     onError: (error) => {
+      if (cancelRequestedRef.current || isCancellationError(error)) {
+        mergeProgress({
+          phase: "cancelled",
+          message: "synthesis cancelled",
+          fraction: null,
+        });
+        activeBatchRemainingRef.current = 0;
+        stopUiTimer();
+        qc.invalidateQueries({ queryKey: ["synth-history"] });
+        qc.invalidateQueries({ queryKey: ["voice-prompts", activeModel] });
+        return;
+      }
       mergeProgress({
         phase: "failed",
         message: (error as Error).message,
@@ -602,10 +634,50 @@ export function Studio() {
       activeBatchRemainingRef.current = 0;
       stopUiTimer();
       setRunning(false);
+      cancelRequestedRef.current = false;
+      setCancelRequested(false);
+    },
+  });
+
+  const cancelGeneration = useMutation({
+    mutationFn: async () => {
+      const synthesisId = activeSynthesisIdRef.current;
+      if (!synthesisId || synthesisId === "pending") {
+        throw new Error("synthesis has not started yet");
+      }
+      cancelRequestedRef.current = true;
+      setCancelRequested(true);
+      activeBatchRemainingRef.current = 0;
+      mergeProgress({
+        synthesis_id: synthesisId,
+        phase: "cancelling",
+        message: "cancelling synthesis",
+        fraction: null,
+      });
+      void tauri.rpc<SynthCancelResult>("synth.cancel", { synthesis_id: synthesisId }).catch(() => null);
+      try {
+        await tauri.restartSidecar();
+      } catch (error) {
+        cancelRequestedRef.current = false;
+        setCancelRequested(false);
+        throw error;
+      }
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["synth-history"] });
+      qc.invalidateQueries({ queryKey: ["synth-running"] });
+      qc.invalidateQueries({ queryKey: ["sidecar-status"] });
+      qc.invalidateQueries({ queryKey: ["voice-prompts", activeModel] });
     },
   });
 
   const generationInProgress = running || synth.isPending;
+  const activeCancellableSynthesisId =
+    displayProgress?.synthesis_id && displayProgress.synthesis_id !== "pending"
+      ? displayProgress.synthesis_id
+      : null;
+  const cancelDisabled =
+    !activeCancellableSynthesisId || cancelRequested || cancelGeneration.isPending;
   const showDetailedDiagnostics = showGenerationDiagnostics && !simpleMode;
   const generatedGroups = useMemo(() => groupSynthesisHistory(history.data), [history.data]);
   const selectedDraft = useMemo(
@@ -793,8 +865,28 @@ export function Studio() {
               onClick={() => synth.mutate()}
             >
               {generationInProgress ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              {generationInProgress ? "Synthesizing…" : "Synthesize"}
+              {cancelRequested ? "Cancelling…" : generationInProgress ? "Synthesizing…" : "Synthesize"}
             </button>
+            {generationInProgress && (
+              <button
+                type="button"
+                className="btn-ghost px-3 py-2 text-sm text-red-300 hover:text-red-200"
+                disabled={cancelDisabled}
+                onClick={() => cancelGeneration.mutate()}
+                title={
+                  activeCancellableSynthesisId
+                    ? "Cancel this generation permanently"
+                    : "Waiting for synthesis to start"
+                }
+              >
+                {cancelGeneration.isPending || cancelRequested ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Square className="w-4 h-4" />
+                )}
+                Cancel
+              </button>
+            )}
             <div
               className="inline-flex h-9 overflow-hidden rounded-md border border-zinc-800 bg-zinc-900"
               title="Synthesis count"
@@ -832,8 +924,13 @@ export function Studio() {
                   : "model not installed"}
               </Link>
             )}
-            {synth.error && (
+            {synth.error && progress?.phase !== "cancelled" && (
               <span className="text-xs text-red-400">{(synth.error as Error).message}</span>
+            )}
+            {cancelGeneration.error && (
+              <span className="text-xs text-red-400">
+                {(cancelGeneration.error as Error).message}
+              </span>
             )}
           </div>
         </div>
@@ -1033,7 +1130,7 @@ export function Studio() {
         }}
       />
 
-      {(running || displayProgress?.phase === "failed") && (
+      {(running || displayProgress?.phase === "failed" || displayProgress?.phase === "cancelled") && (
         <SynthProgressPanel
           progress={displayProgress}
           running={running}
@@ -1106,6 +1203,7 @@ export function Studio() {
                   <option value="ready">Ready</option>
                   <option value="partial">Partial</option>
                   <option value="failed">Failed</option>
+                  <option value="cancelled">Cancelled</option>
                   <option value="running">Running</option>
                 </select>
               </>
@@ -1155,6 +1253,7 @@ function SynthProgressPanel({
   const memory = progress?.memory ?? {};
   const memoryEntries = Object.entries(memory).filter(([, v]) => v > 0);
   const failed = progress?.phase === "failed";
+  const cancelled = progress?.phase === "cancelled";
 
   return (
     <section className="mt-6 card p-4">
@@ -1164,6 +1263,8 @@ function SynthProgressPanel({
           <div className="mt-1 text-xs text-zinc-400">
             {failed
               ? progress?.message ?? "Synthesis failed"
+              : cancelled
+                ? progress?.message ?? "Synthesis cancelled"
               : running
                 ? "Generating audio"
                 : progress?.message ?? "Starting synthesis"}
@@ -1175,7 +1276,9 @@ function SynthProgressPanel({
       </div>
 
       <div className="mt-3 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-        {typeof fraction === "number" ? (
+        {cancelled ? (
+          <div className="h-full w-full bg-zinc-700" />
+        ) : typeof fraction === "number" ? (
           <div
             className="h-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 transition-[width] duration-300"
             style={{ width: `${Math.max(0, Math.min(100, Math.round(fraction * 100)))}%` }}
@@ -1443,9 +1546,11 @@ function statusBadgeClass(status: string): string {
       ? "bg-emerald-500/10 text-emerald-300"
       : status === "failed"
         ? "bg-red-500/10 text-red-300"
-        : status === "partial"
-          ? "bg-amber-500/10 text-amber-300"
-          : "bg-zinc-800 text-zinc-400",
+        : status === "cancelled"
+          ? "bg-zinc-800 text-zinc-300"
+          : status === "partial"
+            ? "bg-amber-500/10 text-amber-300"
+            : "bg-zinc-800 text-zinc-400",
   );
 }
 
@@ -1454,8 +1559,10 @@ function synthesisGroupStatus(runs: SynthesisHistoryItem[]): string {
     return "running";
   }
   if (runs.every((run) => run.status === "ready")) return "ready";
+  if (runs.every((run) => run.status === "cancelled")) return "cancelled";
   if (runs.every((run) => run.status === "failed")) return "failed";
   if (runs.some((run) => run.status === "ready")) return "partial";
+  if (runs.some((run) => run.status === "cancelled")) return "cancelled";
   return runs[0]?.status ?? "pending";
 }
 
@@ -1494,6 +1601,63 @@ async function exportSynthesisAudio(
   await tauri.exportAudio(run.final_audio_path, destination);
 }
 
+function useOneLineOverflow(text: string) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [overflows, setOverflows] = useState(false);
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+
+    let frame = 0;
+    const measure = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const current = ref.current;
+        if (!current) return;
+
+        const style = window.getComputedStyle(current);
+        const lineHeight = Number.parseFloat(style.lineHeight);
+        const oneLineHeight = Number.isFinite(lineHeight)
+          ? lineHeight
+          : current.getBoundingClientRect().height;
+        const clone = current.cloneNode(true) as HTMLElement;
+        clone.style.position = "absolute";
+        clone.style.visibility = "hidden";
+        clone.style.pointerEvents = "none";
+        clone.style.left = "-10000px";
+        clone.style.top = "0";
+        clone.style.boxSizing = "border-box";
+        clone.style.width = `${current.getBoundingClientRect().width}px`;
+        clone.style.height = "auto";
+        clone.style.maxHeight = "none";
+        clone.style.overflow = "visible";
+        clone.style.display = "block";
+        clone.style.setProperty("-webkit-line-clamp", "unset");
+        clone.style.setProperty("-webkit-box-orient", "unset");
+        document.body.appendChild(clone);
+        const fullHeight = clone.scrollHeight;
+        clone.remove();
+
+        setOverflows(fullHeight > oneLineHeight + 1);
+      });
+    };
+
+    measure();
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    window.addEventListener("resize", measure);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [text]);
+
+  return { ref, overflows };
+}
+
 function GeneratedRunGroup({
   group,
   backendKind,
@@ -1509,12 +1673,17 @@ function GeneratedRunGroup({
   simpleMode: boolean;
   onUseRun: (run: SynthesisHistoryItem) => void;
 }) {
+  const qc = useQueryClient();
   const { data: models } = useModels();
   const [expanded, setExpanded] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const canSelectBest = playableAudioCount(group.runs) > 1;
   const selectedTake = canSelectBest ? group.favorite : undefined;
   const primary = selectedTake ?? group.runs[0];
+  const { ref: promptRef, overflows: promptCanExpand } = useOneLineOverflow(
+    primary?.full_text ?? "",
+  );
   const primaryIndex = primary
     ? group.runs.findIndex((candidate) => candidate.id === primary.id)
     : -1;
@@ -1531,12 +1700,29 @@ function GeneratedRunGroup({
       await exportSynthesisAudio(primary, primaryTakeLabel);
     },
   });
+  const deleteGroup = useMutation({
+    mutationFn: () =>
+      tauri.rpc<SynthDeleteResult>("synth.delete", {
+        synthesis_ids: group.runs.map((run) => run.id),
+      }),
+    onSuccess: () => {
+      setDeleteDialogOpen(false);
+      setExpanded(false);
+      qc.invalidateQueries({ queryKey: ["synth-history"] });
+      group.runs.forEach((run) => {
+        qc.removeQueries({ queryKey: ["synth-chunks", run.id] });
+      });
+    },
+  });
   useEffect(() => {
     setExpanded(false);
   }, [selectedTake?.id]);
   useEffect(() => {
     setPromptExpanded(false);
   }, [primary?.id]);
+  useEffect(() => {
+    if (!promptCanExpand) setPromptExpanded(false);
+  }, [promptCanExpand]);
   if (!primary) return null;
 
   const groupStatus = synthesisGroupStatus(group.runs);
@@ -1546,8 +1732,7 @@ function GeneratedRunGroup({
   const modelDeleted = group.runs.some((run) => run.model_deleted);
   const showGroupStatus = groupStatus !== "ready";
   const primaryPlayable = primary.status === "ready" && !!primary.final_audio_path;
-  const promptCanExpand =
-    primary.full_text.length > 80 || primary.full_text.trim().split(/\s+/).length > 12;
+  const deleteLocked = group.runs.some((run) => run.status === "pending" || run.status === "running");
   const primaryLanguage = synthesisLanguage(primary);
   const primaryModelMeta = models?.find((m) => m.id === primary.model_id);
   return (
@@ -1555,9 +1740,10 @@ function GeneratedRunGroup({
       <div className="flex items-start justify-between gap-4">
         <div className="relative min-w-0 flex-1">
           <p
+            ref={promptRef}
             className={cn(
               "text-sm leading-6 text-zinc-100",
-              !promptExpanded && "line-clamp-2",
+              !promptExpanded && "line-clamp-1",
               !promptExpanded && promptCanExpand && "pr-8",
             )}
           >
@@ -1614,7 +1800,7 @@ function GeneratedRunGroup({
           />
         ) : (
           <div className="text-xs text-zinc-500">
-            Audio is not playable yet.
+            {primary.status === "cancelled" ? "Generation was cancelled." : "Audio is not playable yet."}
           </div>
         )}
       </div>
@@ -1722,8 +1908,76 @@ function GeneratedRunGroup({
               Export
             </button>
           )}
+          <button
+            type="button"
+            className="btn-ghost px-2 py-1 text-xs text-red-300 hover:text-red-200"
+            disabled={deleteLocked || deleteGroup.isPending}
+            onClick={() => {
+              deleteGroup.reset();
+              setDeleteDialogOpen(true);
+            }}
+            title={
+              deleteLocked
+                ? "Cannot delete a generated entry while it is pending or running"
+                : "Delete generated entry"
+            }
+          >
+            {deleteGroup.isPending ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="w-3.5 h-3.5" />
+            )}
+            Delete
+          </button>
         </div>
       </div>
+
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => {
+          if (!deleteGroup.isPending) setDeleteDialogOpen(false);
+        }}
+        title="Delete generated entry"
+        description={
+          group.runs.length > 1
+            ? `This removes all ${group.runs.length} takes from history and deletes their generated audio.`
+            : "This removes the entry from history and deletes its generated audio."
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-300 line-clamp-3">
+            {primary.full_text}
+          </p>
+          {deleteGroup.error && (
+            <div className="text-xs text-red-400">
+              {(deleteGroup.error as Error).message}
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="btn-ghost px-3 py-2 text-sm"
+              disabled={deleteGroup.isPending}
+              onClick={() => setDeleteDialogOpen(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-ghost px-3 py-2 text-sm text-red-300 hover:text-red-200"
+              disabled={deleteGroup.isPending}
+              onClick={() => deleteGroup.mutate()}
+            >
+              {deleteGroup.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Trash2 className="w-4 h-4" />
+              )}
+              Delete
+            </button>
+          </div>
+        </div>
+      </Dialog>
 
       {!simpleMode && (
         <ParamBadgeRow
@@ -1898,7 +2152,7 @@ function GeneratedTake({
           />
         ) : (
           <div className="text-xs text-zinc-500">
-            Audio is not playable yet.
+            {run.status === "cancelled" ? "Generation was cancelled." : "Audio is not playable yet."}
           </div>
         )}
       </div>
@@ -1984,7 +2238,7 @@ function GeneratedChunk({
 }) {
   const [draftText, setDraftText] = useState(chunk.text);
   const [seedText, setSeedText] = useState(String(chunk.seed));
-  const locked = generationInProgress || run.voice_deleted || run.model_deleted;
+  const locked = generationInProgress || run.voice_deleted || run.model_deleted || run.status === "cancelled";
   const playable = chunk.status === "ready" && !!chunk.audio_path;
   const dirty = draftText !== chunk.text || seedText !== String(chunk.seed);
   const overrideEntries = Object.entries(chunk.params_override ?? {});
@@ -2049,7 +2303,9 @@ function GeneratedChunk({
             disabled={locked || regenerate.isPending || !draftText.trim()}
             onClick={() => regenerate.mutate()}
             title={
-              run.voice_deleted || run.model_deleted
+              run.status === "cancelled"
+                ? "Cancelled runs cannot be regenerated"
+                : run.voice_deleted || run.model_deleted
                 ? "Cannot regenerate after deleting the source voice or model"
                 : "Regenerate this chunk and rebuild the full run"
             }
@@ -2109,7 +2365,7 @@ function GeneratedChunk({
           />
         ) : (
           <div className="text-xs text-zinc-500">
-            Chunk audio is not playable yet.
+            {chunk.status === "cancelled" ? "Chunk was cancelled." : "Chunk audio is not playable yet."}
           </div>
         )}
       </div>
@@ -2121,6 +2377,11 @@ function formatNumber(value: number, step?: number): string {
   if (Number.isInteger(value) && (!step || Number.isInteger(step))) return String(value);
   const decimals = step ? Math.min(4, Math.max(0, -Math.floor(Math.log10(step)))) : 2;
   return value.toFixed(decimals);
+}
+
+function isCancellationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("synthesis cancelled") || message.includes("sidecar restarted");
 }
 
 function ParamBadgeRow({

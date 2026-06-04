@@ -37,6 +37,7 @@ from timbre.device_policy import (
 # Configure HF cache before any model-import code touches the env.
 hfcache.configure()
 voicelib.init_db()
+voicelib.cancel_interrupted_syntheses()
 
 
 _ADAPTERS = AdapterManager()
@@ -45,8 +46,9 @@ _SYNTH_PROGRESS: dict[str, dict[str, Any]] = {}
 _ACTIVE_SYNTHESIS_ID: str | None = None
 _SYNTH_RUN_LOCK = threading.Lock()
 _RUNNING_SYNTHESIS_ID: str | None = None
+_CANCELLED_SYNTHESIS_IDS: set[str] = set()
 _SYNTH_STARTING = "pending"
-_TERMINAL_SYNTH_PHASES = {"complete", "failed"}
+_TERMINAL_SYNTH_PHASES = {"complete", "failed", "cancelled"}
 _VOICE_PROMPT_ARCHIVE_FORMAT = "timbre.voice_prompts"
 _VOICE_PROMPT_ARCHIVE_VERSION = 1
 _LEGACY_LANGUAGE_CODE_TO_NAME = {
@@ -61,6 +63,10 @@ _LEGACY_LANGUAGE_CODE_TO_NAME = {
     "ru": "russian",
     "es": "spanish",
 }
+
+
+class _SynthesisCancelled(RuntimeError):
+    pass
 
 
 def _begin_synthesis_run() -> None:
@@ -94,11 +100,23 @@ def _finish_synthesis_run(synthesis_id: str | None = None) -> None:
             or _RUNNING_SYNTHESIS_ID in (synthesis_id, _SYNTH_STARTING)
         ):
             _RUNNING_SYNTHESIS_ID = None
+        if synthesis_id is not None:
+            _CANCELLED_SYNTHESIS_IDS.discard(synthesis_id)
 
 
 def _running_synthesis_id() -> str | None:
     with _SYNTH_RUN_LOCK:
         return _RUNNING_SYNTHESIS_ID
+
+
+def _request_synthesis_cancel(synthesis_id: str) -> None:
+    with _SYNTH_RUN_LOCK:
+        _CANCELLED_SYNTHESIS_IDS.add(synthesis_id)
+
+
+def _synthesis_cancel_requested(synthesis_id: str) -> bool:
+    with _SYNTH_RUN_LOCK:
+        return synthesis_id in _CANCELLED_SYNTHESIS_IDS
 
 
 def _set_active_synthesis(synthesis_id: str) -> None:
@@ -107,13 +125,13 @@ def _set_active_synthesis(synthesis_id: str) -> None:
         _ACTIVE_SYNTHESIS_ID = synthesis_id
 
 
-def _store_synth_progress(payload: dict[str, Any]) -> None:
+def _store_synth_progress(payload: dict[str, Any], *, finish_terminal: bool = True) -> None:
     synthesis_id = payload.get("synthesis_id")
     if not isinstance(synthesis_id, str):
         return
     with _PROGRESS_LOCK:
         _SYNTH_PROGRESS[synthesis_id] = dict(payload)
-    if payload.get("phase") in _TERMINAL_SYNTH_PHASES:
+    if finish_terminal and payload.get("phase") in _TERMINAL_SYNTH_PHASES:
         _finish_synthesis_run(synthesis_id)
 
 
@@ -222,6 +240,37 @@ def _history_item(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _cancelled_progress_payload(
+    synthesis_id: str,
+    row: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    latest = _latest_synth_progress(synthesis_id) or {}
+    if row is None:
+        row = voicelib.get_synthesis(synthesis_id)
+    chunks = voicelib.list_chunks(synthesis_id)
+    created_at = int(row.get("created_at") or int(time.time() * 1000))
+    elapsed_ms = latest.get("elapsed_ms")
+    if not isinstance(elapsed_ms, int):
+        elapsed_ms = max(0, int(time.time() * 1000) - created_at)
+    return {
+        "synthesis_id": synthesis_id,
+        "model_id": latest.get("model_id") or row["model_id"],
+        "requested_device": latest.get("requested_device") or row.get("requested_device") or "cpu",
+        "resolved_device": latest.get("resolved_device") or row.get("resolved_device"),
+        "device_detail": latest.get("device_detail") or row.get("device_detail"),
+        "fallback_device": latest.get("fallback_device") or row.get("fallback_device"),
+        "fallback_reason": latest.get("fallback_reason") or row.get("fallback_reason"),
+        "warnings": latest.get("warnings") or [],
+        "phase": "cancelled",
+        "message": "synthesis cancelled",
+        "chunk_idx": latest.get("chunk_idx"),
+        "chunk_count": latest.get("chunk_count") or len(chunks),
+        "fraction": None,
+        "elapsed_ms": elapsed_ms,
+        "memory": latest.get("memory") or {},
+    }
+
+
 def _rebuild_final_audio(synthesis_id: str) -> dict[str, Any]:
     """Concatenate ready chunk WAVs into the synthesis-level playable WAV."""
     chunks = voicelib.list_chunks(synthesis_id)
@@ -236,11 +285,15 @@ def _rebuild_final_audio(synthesis_id: str) -> dict[str, Any]:
     final_path = clips_dir() / synthesis_id / "full.wav"
     write_wav(final_path, samples, sr)
     duration_ms = int(len(samples) * 1000 / sr)
-    voicelib.update_synthesis_result(
+    updated = voicelib.update_synthesis_result(
         synthesis_id,
         final_audio_path=str(final_path),
         duration_ms=duration_ms,
     )
+    if not updated:
+        with contextlib.suppress(Exception):
+            final_path.unlink(missing_ok=True)
+        raise _SynthesisCancelled("synthesis cancelled")
     return {
         "final_audio_path": str(final_path),
         "duration_ms": duration_ms,
@@ -717,6 +770,49 @@ def build_server() -> RpcServer:
         voicelib.set_synthesis_favorite(synthesis_id)
         return {"ok": True}
 
+    @rpc.method("synth.delete")
+    def synth_delete(synthesis_ids: list[str]) -> dict:
+        if not isinstance(synthesis_ids, list) or not all(
+            isinstance(sid, str) and sid for sid in synthesis_ids
+        ):
+            raise RpcError(ERR_INVALID_PARAMS, "synthesis_ids must be a list of synthesis ids")
+        try:
+            deleted = voicelib.delete_syntheses(synthesis_ids)
+        except (KeyError, RuntimeError) as e:
+            raise RpcError(ERR_INVALID_PARAMS, str(e)) from e
+        with _PROGRESS_LOCK:
+            for synthesis_id in deleted:
+                _SYNTH_PROGRESS.pop(synthesis_id, None)
+        return {"ok": True, "deleted": deleted}
+
+    @rpc.method("synth.cancel")
+    def synth_cancel(synthesis_id: str) -> dict:
+        row = voicelib.get_synthesis(synthesis_id)
+        if row.get("status") in ("ready", "failed", "cancelled"):
+            return {
+                "ok": False,
+                "synthesis_id": synthesis_id,
+                "status": row.get("status"),
+            }
+        if _running_synthesis_id() != synthesis_id:
+            return {
+                "ok": False,
+                "synthesis_id": synthesis_id,
+                "status": row.get("status"),
+            }
+
+        _request_synthesis_cancel(synthesis_id)
+        cancelled = voicelib.cancel_synthesis(synthesis_id)
+        payload = _cancelled_progress_payload(synthesis_id, cancelled)
+        _store_synth_progress(payload, finish_terminal=False)
+        rpc.notify("synth.progress", payload)
+        rpc.notify("synth.cancelled", {"synthesis_id": synthesis_id})
+        return {
+            "ok": True,
+            "synthesis_id": synthesis_id,
+            "status": "cancelled",
+        }
+
     @rpc.method("synth.progress_latest")
     def synth_progress_latest(synthesis_id: str | None = None) -> dict | None:
         return _latest_synth_progress(synthesis_id)
@@ -833,6 +929,17 @@ def build_server() -> RpcServer:
             _store_synth_progress(payload)
             notify("synth.progress", payload)
 
+        def cancel_requested() -> bool:
+            return _synthesis_cancel_requested(synthesis_id)
+
+        def finish_cancelled() -> None:
+            cancelled = voicelib.cancel_synthesis(synthesis_id)
+            payload = _cancelled_progress_payload(synthesis_id, cancelled)
+            _store_synth_progress(payload)
+            notify("synth.progress", payload)
+            notify("synth.cancelled", {"synthesis_id": synthesis_id})
+            raise RpcError(ERR_INVALID_PARAMS, "synthesis cancelled")
+
         def with_heartbeat(
             phase: str,
             message: str,
@@ -931,6 +1038,8 @@ def build_server() -> RpcServer:
             "synthesis_id": synthesis_id,
             "chunk_count": len(chunks),
         })
+        if cancel_requested():
+            finish_cancelled()
 
         progress("loading_model", f"loading {info.name}", fraction=0.05)
         try:
@@ -957,6 +1066,8 @@ def build_server() -> RpcServer:
                 voicelib.update_synthesis_status(synthesis_id, "failed")
                 progress("failed", "CPU fallback model load failed", fraction=None)
                 raise
+        if cancel_requested():
+            finish_cancelled()
         progress("loading_model", "model ready", fraction=0.15)
         diag = _adapter_diagnostics(adapter)
         voicelib.update_synthesis_device(
@@ -976,6 +1087,8 @@ def build_server() -> RpcServer:
         # synths with the same (voice, model), so we cache it on disk.
         existing = existing_prompt
         if existing and existing.exists():
+            if cancel_requested():
+                finish_cancelled()
             progress("loading_prompt", "loading cached voice prompt", fraction=0.20)
             try:
                 payload_device = (
@@ -1008,6 +1121,8 @@ def build_server() -> RpcServer:
                 cached_payload = None
 
         if cached_payload is None:
+            if cancel_requested():
+                finish_cancelled()
             if prompt_only:
                 message = f"prompt-only voice does not include a usable cached prompt for {info.name}"
                 voicelib.update_synthesis_status(synthesis_id, "failed")
@@ -1056,6 +1171,8 @@ def build_server() -> RpcServer:
                         )
                         clone_result = None
             if clone_result is not None and clone_result.payload is not None:
+                if cancel_requested():
+                    finish_cancelled()
                 cached_payload = clone_result.payload
                 progress("encoding_prompt", "voice prompt encoded", fraction=0.32)
                 # Persist for future synths.
@@ -1082,6 +1199,8 @@ def build_server() -> RpcServer:
         chunk_records = []
         try:
             for ch in chunks:
+                if cancel_requested():
+                    finish_cancelled()
                 base_fraction = 0.35 + 0.55 * (ch.idx / max(len(chunks), 1))
                 chunk_seed = seed if seed is not None else (hash((synthesis_id, ch.idx)) & 0x7FFFFFFF)
                 cid = voicelib.insert_chunk(
@@ -1128,6 +1247,8 @@ def build_server() -> RpcServer:
                         chunk_idx=ch.idx,
                         fraction=base_fraction,
                     )
+                if cancel_requested():
+                    finish_cancelled()
                 progress(
                     "writing_audio",
                     f"writing chunk {ch.idx + 1} of {len(chunks)}",
@@ -1137,9 +1258,13 @@ def build_server() -> RpcServer:
                 audio_path = clips_dir() / synthesis_id / f"{ch.idx:04d}.wav"
                 write_wav(audio_path, samples, sr)
                 duration_ms = int(len(samples) * 1000 / sr)
-                voicelib.update_chunk_result(
+                updated = voicelib.update_chunk_result(
                     cid, audio_path=str(audio_path), duration_ms=duration_ms,
                 )
+                if not updated:
+                    with contextlib.suppress(Exception):
+                        audio_path.unlink(missing_ok=True)
+                    raise _SynthesisCancelled("synthesis cancelled")
                 elapsed_ms = int((time.time() - t0) * 1000)
                 chunk_records.append({
                     "id": cid, "idx": ch.idx, "audio_path": str(audio_path),
@@ -1147,9 +1272,17 @@ def build_server() -> RpcServer:
                 })
                 notify("synth.chunk_ready", chunk_records[-1])
 
+            if cancel_requested():
+                finish_cancelled()
             progress("finalizing", "building playable full-run WAV", fraction=0.95)
             final = _rebuild_final_audio(synthesis_id)
+        except _SynthesisCancelled:
+            finish_cancelled()
+        except RpcError:
+            raise
         except Exception:
+            if voicelib.get_synthesis(synthesis_id).get("status") == "cancelled":
+                finish_cancelled()
             voicelib.update_synthesis_status(synthesis_id, "failed")
             progress("failed", "synthesis failed", fraction=None)
             raise
@@ -1289,7 +1422,7 @@ def build_server() -> RpcServer:
         audio_path = clips_dir() / synth["id"] / f"{row['idx']:04d}.wav"
         write_wav(audio_path, samples, sr)
         duration_ms = int(len(samples) * 1000 / sr)
-        voicelib.update_chunk_result(
+        updated = voicelib.update_chunk_result(
             chunk_id,
             audio_path=str(audio_path),
             duration_ms=duration_ms,
@@ -1297,7 +1430,14 @@ def build_server() -> RpcServer:
             seed=chunk_seed,
             params_override=params_override,
         )
-        final = _rebuild_final_audio(synth["id"])
+        if not updated:
+            with contextlib.suppress(Exception):
+                audio_path.unlink(missing_ok=True)
+            raise RpcError(ERR_INVALID_PARAMS, "chunk was cancelled")
+        try:
+            final = _rebuild_final_audio(synth["id"])
+        except _SynthesisCancelled as e:
+            raise RpcError(ERR_INVALID_PARAMS, "synthesis cancelled") from e
         notify("synth.chunk_ready", {
             "id": chunk_id, "idx": row["idx"], "audio_path": str(audio_path),
             "duration_ms": duration_ms, "text": text, "seed": chunk_seed,

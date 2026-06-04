@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileMusic, Loader2, Mic, Save, Sparkles, Square, Trash2 } from "lucide-react";
+import { FileMusic, Loader2, Mic, Save, Sparkles, Square, Trash2, Upload } from "lucide-react";
 import { Dialog } from "@/components/Dialog";
 import { Waveform } from "@/components/Waveform";
 import { tauri } from "@/lib/ipc";
@@ -17,7 +17,7 @@ interface Props {
   preserveCreateDraftOnClose?: boolean;
 }
 
-type SourceMode = "record" | "file";
+type SourceMode = "record" | "file" | "import";
 
 interface RecorderSession {
   stream: MediaStream;
@@ -52,6 +52,7 @@ export function VoiceCreateDialog({
   const [recordedDuration, setRecordedDuration] = useState(0);
   const [inputLevel, setInputLevel] = useState(0);
   const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [archivePath, setArchivePath] = useState<string | null>(null);
   const recorderRef = useRef<RecorderSession | null>(null);
   const chunksRef = useRef<Float32Array[]>([]);
   const recordingPreviewUrlRef = useRef<string | null>(null);
@@ -152,6 +153,7 @@ export function VoiceCreateDialog({
     clearRecordingPreview();
     setState(stateForVoice(voice));
     setSourceMode(voice ? "file" : "record");
+    setArchivePath(null);
     setRecordingElapsed(0);
     setInputLevel(0);
     setRecordingError(null);
@@ -199,6 +201,13 @@ export function VoiceCreateDialog({
 
   const saveVoice = useMutation({
     mutationFn: async () => {
+      if (sourceMode === "import") {
+        if (!archivePath) {
+          throw new Error("Choose a .timbrevoice archive to import.");
+        }
+        return tauri.rpc<Voice>("voices.import_prompts", { archive_path: archivePath });
+      }
+
       let audioPath = state.audioPath;
       if (sourceMode === "record") {
         audioPath = await saveRecordingClip();
@@ -224,6 +233,7 @@ export function VoiceCreateDialog({
       clearRecordingPreview();
       setState(initialState);
       setSourceMode("record");
+      setArchivePath(null);
       setRecordingElapsed(0);
       setInputLevel(0);
       setRecordingError(null);
@@ -346,6 +356,16 @@ export function VoiceCreateDialog({
     }
   };
 
+  const pickArchive = async () => {
+    const file = await openFileDialog({
+      multiple: false,
+      filters: [{ name: "Timbre voice", extensions: ["timbrevoice"] }],
+    });
+    if (!file) return;
+    const path = typeof file === "string" ? file : (file as { path: string }).path;
+    setArchivePath(path);
+  };
+
   const close = () => {
     if (saveVoice.isPending || transcribe.isPending) return;
 
@@ -361,6 +381,7 @@ export function VoiceCreateDialog({
     clearRecordingPreview();
     setState(editing ? initialState : stateForVoice(voice));
     setSourceMode(editing ? "record" : voice ? "file" : "record");
+    setArchivePath(null);
     setRecordingError(null);
     transcribe.reset();
     onClose();
@@ -368,7 +389,11 @@ export function VoiceCreateDialog({
 
   const useReferenceText = () => set("transcript", REFERENCE_TEXT);
   const hasTranscribableClip =
-    sourceMode === "record" ? !!recordingBlob && !recording : !!state.audioPath;
+    sourceMode === "record"
+      ? !!recordingBlob && !recording
+      : sourceMode === "file"
+        ? !!state.audioPath
+        : false;
   const canTranscribe =
     hasTranscribableClip &&
     !saveVoice.isPending &&
@@ -377,7 +402,9 @@ export function VoiceCreateDialog({
   const canSave =
     sourceMode === "record"
       ? !!recordingBlob && !recording
-      : !!state.audioPath;
+      : sourceMode === "file"
+        ? !!state.audioPath
+        : !!archivePath;
 
   return (
     <Dialog
@@ -387,15 +414,15 @@ export function VoiceCreateDialog({
       description={
         editing
           ? "Save changes as a new immutable voice version. Existing generated audio keeps using the old version."
-          : "Clone a speaker from a short reference clip. A transcript helps align the prompt to the audio."
+          : "Record a clip, choose an audio file, or import a .timbrevoice archive. A transcript helps align the prompt to the audio."
       }
     >
       <div className="space-y-4">
         <div>
           <label className="block text-xs font-medium text-zinc-400 mb-1.5">
-            Reference clip
+            Source
           </label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className={cn("grid gap-2", editing ? "grid-cols-2" : "grid-cols-3")}>
             <SourceButton
               selected={sourceMode === "record"}
               disabled={saveVoice.isPending || recording}
@@ -419,10 +446,25 @@ export function VoiceCreateDialog({
             >
               File
             </SourceButton>
+            {!editing && (
+              <SourceButton
+                selected={sourceMode === "import"}
+                disabled={saveVoice.isPending || recording}
+                onClick={() => {
+                  stopRecording(false);
+                  clearRecordingPreview();
+                  setState((s) => ({ ...s, audioPath: "" }));
+                  setSourceMode("import");
+                }}
+                icon={<Upload className="w-4 h-4" />}
+              >
+                Import
+              </SourceButton>
+            )}
           </div>
         </div>
 
-        {sourceMode === "record" ? (
+        {sourceMode === "record" && (
           <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-3 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -506,7 +548,9 @@ export function VoiceCreateDialog({
               Read the reference text once in a quiet room. The recorder stops automatically at 15 seconds.
             </p>
           </div>
-        ) : (
+        )}
+
+        {sourceMode === "file" && (
           <div>
             <button
               type="button"
@@ -531,17 +575,44 @@ export function VoiceCreateDialog({
           </div>
         )}
 
-        <div>
-          <label className="block text-xs font-medium text-zinc-400 mb-1.5">Name</label>
-          <input
-            className="input"
-            value={state.name}
-            onChange={(e) => set("name", e.target.value)}
-            placeholder="e.g. Narrator"
-            disabled={saveVoice.isPending}
-          />
-        </div>
+        {sourceMode === "import" && (
+          <div className="space-y-3">
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-200">
+              Import only trusted Timbre voice archives. Prompt archives contain
+              model prompt payloads but no source recording or transcript.
+            </div>
+            <button
+              type="button"
+              className="btn-soft w-full justify-start"
+              onClick={pickArchive}
+              disabled={saveVoice.isPending}
+            >
+              <Upload className="w-4 h-4 shrink-0" />
+              <span className="truncate">
+                {archivePath ? basename(archivePath) : "Choose a .timbrevoice archive..."}
+              </span>
+            </button>
+            <p className="text-[11px] text-zinc-500">
+              The archive supplies the voice name and cached model prompts. No
+              transcript or source clip is imported.
+            </p>
+          </div>
+        )}
 
+        {sourceMode !== "import" && (
+          <div>
+            <label className="block text-xs font-medium text-zinc-400 mb-1.5">Name</label>
+            <input
+              className="input"
+              value={state.name}
+              onChange={(e) => set("name", e.target.value)}
+              placeholder="e.g. Narrator"
+              disabled={saveVoice.isPending}
+            />
+          </div>
+        )}
+
+        {sourceMode !== "import" && (
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <label className="block text-xs font-medium text-zinc-400">
@@ -608,6 +679,7 @@ export function VoiceCreateDialog({
             </p>
           )}
         </div>
+        )}
 
         {saveVoice.error && (
           <div className="text-xs text-red-400">
@@ -626,10 +698,16 @@ export function VoiceCreateDialog({
           >
             {saveVoice.isPending ? (
               <Loader2 className="w-4 h-4 animate-spin" />
+            ) : sourceMode === "import" ? (
+              <Upload className="w-4 h-4" />
             ) : (
               <Save className="w-4 h-4" />
             )}
-            {editing ? "Save version" : "Save voice"}
+            {editing
+              ? "Save version"
+              : sourceMode === "import"
+                ? "Import voice"
+                : "Save voice"}
           </button>
         </div>
       </div>

@@ -41,6 +41,7 @@ export const tauri = {
   uninstallBackendPack: () => invoke<BackendStatus>("uninstall_backend_pack"),
   startSidecar: () => invoke<SidecarStatus>("start_sidecar"),
   stopSidecar: () => invoke<void>("stop_sidecar"),
+  restartSidecar: () => invoke<SidecarStatus>("restart_sidecar"),
   sidecarStatus: () => invoke<SidecarStatus>("sidecar_status"),
   installModelDeps: (modelId: string, adapter: string) =>
     invoke<void>("install_model_deps", { modelId, adapter }),

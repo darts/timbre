@@ -1,5 +1,6 @@
 pyproject.toml
 tests/test_models_state.py
+tests/test_voicelib.py
 timbre/__init__.py
 timbre/__main__.py
 timbre/adapter_manager.py

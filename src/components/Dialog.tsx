@@ -1,4 +1,5 @@
 import { ReactNode, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 export function Dialog({
@@ -25,9 +26,9 @@ export function Dialog({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/60 backdrop-blur-sm p-6"
+      className="fixed inset-0 z-[1000] grid place-items-center bg-black/60 backdrop-blur-sm p-6"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -58,6 +59,7 @@ export function Dialog({
         )}
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

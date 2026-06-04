@@ -216,6 +216,54 @@ impl Sidecar {
         Ok(())
     }
 
+    pub async fn restart_hard(self: Arc<Self>, app: AppHandle) -> Result<SidecarStatus> {
+        const EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+        let handle = {
+            let mut g = self.inner.lock().await;
+            g.take()
+        };
+
+        if let Some(h) = handle {
+            let SidecarHandle {
+                mut child,
+                write_tx,
+                ..
+            } = h;
+            drop(write_tx);
+
+            if let Err(e) = child.start_kill() {
+                tracing::warn!("killing sidecar during hard restart failed: {e}");
+            }
+            match timeout(EXIT_TIMEOUT, child.wait()).await {
+                Ok(Ok(status)) => {
+                    tracing::debug!("sidecar exited during hard restart: {status}");
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("waiting for sidecar during hard restart failed: {e}");
+                }
+                Err(_) => {
+                    tracing::warn!("sidecar did not exit promptly during hard restart");
+                    child
+                        .kill()
+                        .await
+                        .context("kill unresponsive sidecar during hard restart")?;
+                }
+            }
+
+            let mut p = self.pending.lock().await;
+            for (_, tx) in p.map.drain() {
+                let _ = tx.send(Err(RpcErrorPayload {
+                    code: -32004,
+                    message: "sidecar restarted".into(),
+                    data: None,
+                }));
+            }
+        }
+
+        self.start(app).await
+    }
+
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, RpcErrorPayload> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let req = json!({
