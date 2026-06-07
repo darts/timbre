@@ -66,6 +66,6 @@ You are entirely responsible for your actions using this software. Do not clone 
 
 Timbre is licensed under the [MIT License](LICENSE).
 
-Third-party components — the four TTS models, PyTorch, the Tauri/React stack, the bundled Python runtime, and GPU runtimes — are attributed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Each downloaded model retains its upstream license; the Models route in the app links to the license URL for whichever model is selected.
+Third-party components - the four TTS models, PyTorch, the Tauri/React stack, the bundled Python runtime, and GPU runtimes - are attributed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Each downloaded model retains its upstream license; the Models route in the app links to the license URL for whichever model is selected.
 
 
