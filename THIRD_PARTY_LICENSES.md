@@ -32,7 +32,7 @@ Notes:
 The authoritative per-model metadata Timbre uses at runtime lives in
 [`resources/models.manifest.json`](resources/models.manifest.json).
 
-## Desktop Shell — Rust
+## Desktop Shell - Rust
 
 | Crate | License |
 |---|---|
@@ -45,7 +45,7 @@ The authoritative per-model metadata Timbre uses at runtime lives in
 | tracing, tracing-subscriber, tracing-appender | MIT |
 | [windows](https://github.com/microsoft/windows-rs) (Windows only, DXGI GPU probe) | Apache-2.0 OR MIT |
 
-## Frontend — JavaScript / TypeScript
+## Frontend - JavaScript / TypeScript
 
 | Package | License |
 |---|---|
@@ -93,13 +93,13 @@ A standalone Python 3.12 runtime is bundled per-platform via
 PyTorch is installed against the user's selected backend during first-run
 setup. Each runtime carries its own license:
 
-- **NVIDIA CUDA** (`cu128` PyTorch wheels) — proprietary, redistributed under
+- **NVIDIA CUDA** (`cu128` PyTorch wheels) - proprietary, redistributed under
   the [NVIDIA Software License Agreement](https://docs.nvidia.com/cuda/eula/index.html).
 - **AMD ROCm** (Linux: PyTorch ROCm wheels; Windows: AMD's
-  [`repo.radeon.com`](https://repo.radeon.com/) Radeon/Ryzen wheels) — mix of
+  [`repo.radeon.com`](https://repo.radeon.com/) Radeon/Ryzen wheels) - mix of
   open-source (mostly MIT / Apache-2.0) and proprietary AMD components.
-- **Apple Metal / MPS** — proprietary, shipped with macOS.
-- **CPU** — no third-party runtime.
+- **Apple Metal / MPS** - proprietary, shipped with macOS.
+- **CPU** - no third-party runtime.
 
 ## Fonts & Icons
 
